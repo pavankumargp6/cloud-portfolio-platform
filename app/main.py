@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import applications, clients, dashboard, health, incidents, monitoring, notes
+from app.routers import applications, backups, clients, dashboard, health, incidents, monitoring, notes
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -21,5 +21,6 @@ app.include_router(dashboard.router)
 app.include_router(monitoring.router)
 app.include_router(incidents.router)
 app.include_router(incidents.app_router)
+app.include_router(backups.router)
 
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")

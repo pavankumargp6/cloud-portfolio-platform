@@ -1,0 +1,35 @@
+<tr id="application-{{ application.id }}">
+  <td>{{ application.id }}</td>
+  <td>{{ application.name }}</td>
+  <td><span class="badge env-{{ application.environment.value }}">{{ application.environment.value }}</span></td>
+  <td><span class="badge status-{{ application.status.value }}">{{ application.status.value }}</span></td>
+  <td><a href="{{ application.base_url }}" target="_blank" rel="noopener noreferrer">{{ application.base_url }}</a></td>
+  <td>
+    <details class="row-edit">
+      <summary>Edit</summary>
+      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/dashboard/applications/{{ application.id }}/edit"
+            hx-post="/dashboard/applications/{{ application.id }}/edit"
+            hx-target="closest tr" hx-swap="outerHTML">
+        <label>Name <input name="name" value="{{ application.name }}" required maxlength="255"></label>
+        <label>Base URL <input name="base_url" type="url" value="{{ application.base_url }}" required maxlength="2048"></label>
+        <label>Environment
+          <select name="environment">
+            {% for env in environments %}
+            <option value="{{ env.value }}" {% if env.value == application.environment.value %}selected{% endif %}>{{ env.value }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Status
+          <select name="status">
+            {% for s in statuses %}
+            <option value="{{ s.value }}" {% if s.value == application.status.value %}selected{% endif %}>{{ s.value }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Description <textarea name="description" rows="2">{{ application.description or '' }}</textarea></label>
+        <button type="submit">Save</button>
+      </form>
+    </details>
+  </td>
+</tr>

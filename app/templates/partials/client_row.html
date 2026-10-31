@@ -1,0 +1,21 @@
+<tr id="client-{{ client.id }}">
+  <td>{{ client.id }}</td>
+  <td><a href="/dashboard/clients/{{ client.id }}">{{ client.name }}</a></td>
+  <td>{{ client.contact_email or "—" }}</td>
+  <td>{{ client.notes or "—" }}</td>
+  <td>{{ client.created_at.strftime("%Y-%m-%d") }}</td>
+  <td>
+    <details class="row-edit">
+      <summary>Edit</summary>
+      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/dashboard/clients/{{ client.id }}/edit"
+            hx-post="/dashboard/clients/{{ client.id }}/edit"
+            hx-target="closest tr" hx-swap="outerHTML">
+        <label>Name <input name="name" value="{{ client.name }}" required maxlength="255"></label>
+        <label>Contact email <input name="contact_email" type="email" value="{{ client.contact_email or '' }}" maxlength="320"></label>
+        <label>Notes <textarea name="notes" rows="2">{{ client.notes or '' }}</textarea></label>
+        <button type="submit">Save</button>
+      </form>
+    </details>
+  </td>
+</tr>

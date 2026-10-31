@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Agency Reliability Desk{% endblock %}
+{% block content %}
+<h1>Agency overview</h1>
+
+<section class="stats-grid">
+  <div class="stat-card"><span class="stat-value">{{ stats.total_clients }}</span><span class="stat-label">Clients</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.total_applications }}</span><span class="stat-label">Applications</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.active }}</span><span class="stat-label">Active</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.maintenance }}</span><span class="stat-label">Maintenance</span></div>
+  <div class="stat-card"><span class="stat-value">{{ stats.archived }}</span><span class="stat-label">Archived</span></div>
+</section>
+
+<section class="panel">
+  <h2>Applications by environment</h2>
+  <div class="env-bars">
+    {% for env, count in stats.by_environment.items() %}
+    <div class="env-bar">
+      <span class="env-label">{{ env }}</span>
+      <div class="bar-track">
+        <div class="bar-fill env-{{ env }}"
+             style="width: {{ ((count / (stats.total_applications or 1)) * 100) | round(1) }}%"></div>
+      </div>
+      <span class="env-count">{{ count }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Recent clients</h2>
+  {% if recent_clients %}
+  <table class="data-table">
+    <thead><tr><th>ID</th><th>Name</th><th>Created</th></tr></thead>
+    <tbody>
+      {% for client in recent_clients %}
+      <tr>
+        <td>{{ client.id }}</td>
+        <td><a href="/dashboard/clients/{{ client.id }}">{{ client.name }}</a></td>
+        <td>{{ client.created_at.strftime("%Y-%m-%d") }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No clients yet.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Recent applications</h2>
+  {% if recent_applications %}
+  <table class="data-table">
+    <thead><tr><th>ID</th><th>Name</th><th>Environment</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for app in recent_applications %}
+      <tr>
+        <td>{{ app.id }}</td>
+        <td>{{ app.name }}</td>
+        <td><span class="badge env-{{ app.environment.value }}">{{ app.environment.value }}</span></td>
+        <td><span class="badge status-{{ app.status.value }}">{{ app.status.value }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No applications yet.</p>{% endif %}
+</section>
+{% endblock %}

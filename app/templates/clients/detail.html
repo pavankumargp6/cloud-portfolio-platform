@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }} · Agency Reliability Desk{% endblock %}
+{% block content %}
+<p><a href="/dashboard/clients">← All clients</a></p>
+<h1>{{ client.name }}</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<section class="panel">
+  <h2>Client details</h2>
+  <dl class="detail-list">
+    <dt>ID</dt><dd>{{ client.id }}</dd>
+    <dt>Contact email</dt><dd>{{ client.contact_email or "—" }}</dd>
+    <dt>Notes</dt><dd>{{ client.notes or "—" }}</dd>
+    <dt>Created</dt><dd>{{ client.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</dd>
+  </dl>
+  <details class="row-edit">
+    <summary>Edit client</summary>
+    <form method="post" action="/dashboard/clients/{{ client.id }}/edit">
+      <label>Name <input name="name" value="{{ client.name }}" required maxlength="255"></label>
+      <label>Contact email <input name="contact_email" type="email" value="{{ client.contact_email or '' }}" maxlength="320"></label>
+      <label>Notes <textarea name="notes" rows="2">{{ client.notes or '' }}</textarea></label>
+      <button type="submit">Save changes</button>
+    </form>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Applications</h2>
+  <details class="create-panel">
+    <summary>Add application</summary>
+    <form method="post" action="/dashboard/clients/{{ client.id }}/applications" class="form-grid">
+      <label>Name <input name="name" required maxlength="255"></label>
+      <label>Base URL <input name="base_url" type="url" required maxlength="2048" placeholder="https://example.com"></label>
+      <label>Environment
+        <select name="environment">
+          {% for env in environments %}<option value="{{ env.value }}">{{ env.value }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Status
+        <select name="status">
+          {% for s in statuses %}
+          <option value="{{ s.value }}" {% if s.value == "active" %}selected{% endif %}>{{ s.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Description <textarea name="description" rows="2"></textarea></label>
+      <button type="submit">Create application</button>
+    </form>
+  </details>
+
+  <table class="data-table">
+    <thead>
+      <tr><th>ID</th><th>Name</th><th>Environment</th><th>Status</th><th>Base URL</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for application in applications %}
+        {% include "partials/application_row.html" %}
+      {% else %}
+        <tr><td colspan="6" class="empty">No applications yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

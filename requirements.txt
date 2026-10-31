@@ -4,3 +4,5 @@ SQLAlchemy
 psycopg[binary]
 alembic
 email-validator
+jinja2
+python-multipart

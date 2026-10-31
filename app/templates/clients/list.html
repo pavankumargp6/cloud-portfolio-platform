@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Clients · Agency Reliability Desk{% endblock %}
+{% block content %}
+<h1>Clients</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<details class="create-panel">
+  <summary>Add client</summary>
+  <form method="post" action="/dashboard/clients" class="form-grid">
+    <label>Name <input name="name" required maxlength="255"></label>
+    <label>Contact email <input name="contact_email" type="email" maxlength="320"></label>
+    <label>Notes <textarea name="notes" rows="2"></textarea></label>
+    <button type="submit">Create client</button>
+  </form>
+</details>
+
+<table class="data-table">
+  <thead>
+    <tr><th>ID</th><th>Name</th><th>Contact</th><th>Notes</th><th>Created</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for client in clients %}
+      {% include "partials/client_row.html" %}
+    {% else %}
+      <tr><td colspan="6" class="empty">No clients yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

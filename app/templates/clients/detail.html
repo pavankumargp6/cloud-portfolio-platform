@@ -97,8 +97,10 @@
 
 <section class="panel">
   <h2>Backups</h2>
+  {% set ns = namespace(has_any=false) %}
   {% for app in applications %}
     {% if backups.get(app.id) %}
+      {% set ns.has_any = true %}
       <div style="margin-bottom: 1.5rem;">
         <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">{{ app.name }}</h3>
         <table class="data-table">
@@ -140,7 +142,7 @@
       </div>
     {% endif %}
   {% endfor %}
-  {% if not backups.values() or all(len(v)==0 for v in backups.values()) %}
+  {% if not ns.has_any %}
     <p class="empty">No backups recorded.</p>
   {% endif %}
 </section>

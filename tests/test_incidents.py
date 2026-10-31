@@ -280,3 +280,111 @@ class TestWorkerIncidentIntegration(IncidentTestBase):
         self.assertEqual(len(incidents), 1)
         self.assertEqual(incidents[0].status, "resolved")
         self.assertEqual(incidents[0].resolved_by, "system")
+
+
+class TestIncidentDashboardIntegration(IncidentTestBase):
+    """Tests the dashboard endpoints for incidents (requires API to be running)."""
+    
+    def test_incident_panel_renders(self):
+        import urllib.request
+        import uuid
+
+        # 1. Create a client and app via API
+        import json
+        BASE_URL = "http://localhost:8000"
+        
+        def api_post(path, data):
+            req = urllib.request.Request(
+                BASE_URL + path,
+                data=json.dumps(data).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read())
+
+        client = api_post("/clients", {"name": f"dash-{uuid.uuid4().hex[:6]}"})
+        app = api_post(f"/clients/{client['id']}/applications", {
+            "name": "dash-app",
+            "base_url": "https://1.1.1.1/",
+            "environment": "production"
+        })
+        
+        # 2. Open incident directly in DB
+        svc.open_incident(self.db, app["id"], reason="Test incident")
+        self.db.commit()
+
+        # 3. Fetch dashboard HTML
+        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
+        with urllib.request.urlopen(req) as resp:
+            html = resp.read().decode()
+            
+        self.assertIn("Recent Incidents", html)
+        self.assertIn("OPEN", html)
+        self.assertIn("Acknowledge", html)
+        self.assertIn("Resolve", html)
+
+    def test_acknowledge_incident_via_dashboard(self):
+        import urllib.request
+        import urllib.parse
+        import uuid
+        import json
+        BASE_URL = "http://localhost:8000"
+        
+        def api_post(path, data, form=False):
+            headers = {}
+            if form:
+                req_data = urllib.parse.urlencode(data).encode()
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+            else:
+                req_data = json.dumps(data).encode()
+                headers["Content-Type"] = "application/json"
+            
+            req = urllib.request.Request(
+                BASE_URL + path,
+                data=req_data,
+                headers=headers,
+                method="POST"
+            )
+            with urllib.request.urlopen(req) as resp:
+                return resp.status
+
+        # 1. Create client/app
+        req = urllib.request.Request(
+            BASE_URL + "/clients",
+            data=json.dumps({"name": f"dash-{uuid.uuid4().hex[:6]}"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            client = json.loads(resp.read())
+            
+        req = urllib.request.Request(
+            BASE_URL + f"/clients/{client['id']}/applications",
+            data=json.dumps({
+                "name": "dash-app",
+                "base_url": "https://1.1.1.1/",
+                "environment": "production"
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            app = json.loads(resp.read())
+
+        # 2. Open incident
+        inc = svc.open_incident(self.db, app["id"], reason="Test incident")
+        self.db.commit()
+        inc_id = inc.id
+
+        # 3. Hit dashboard acknowledge route
+        status = api_post(f"/dashboard/incidents/{inc_id}/acknowledge", {})
+        # Note: FastAPI RedirectResponse follows automatically in urllib if it's a GET, 
+        # but this is a POST, so we get 200 (or 303/302). We don't check exact status,
+        # just that it didn't crash.
+
+        # 4. Verify DB state
+        self.db.expire_all()
+        updated_inc = self.db.get(Incident, inc_id)
+        self.assertEqual(updated_inc.status, "acknowledged")
+        self.assertEqual(updated_inc.acknowledged_by, "Dashboard User")

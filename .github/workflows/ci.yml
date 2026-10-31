@@ -56,7 +56,7 @@ jobs:
         run: python3 -m unittest tests.test_ssrf -v
 
       - name: Run worker tests (inside container)
-        run: docker compose exec -T api python3 -m unittest tests.test_monitoring_worker tests.test_incidents -v
+        run: docker compose exec -T api python3 -m unittest tests.test_monitoring_worker tests.test_incidents tests.test_backups -v
 
       - name: Show logs on failure
         if: failure()

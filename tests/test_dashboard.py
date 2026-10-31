@@ -36,6 +36,19 @@ def api_json(path):
         return json.loads(resp.read())
 
 
+def find_client_by_name(name):
+    """Page through /clients to find a client by name. Size-independent."""
+    offset = 0
+    while True:
+        page = api_json(f"/clients?limit=100&offset={offset}")
+        for client in page["items"]:
+            if client["name"] == name:
+                return client
+        offset += page["limit"]
+        if offset >= page["total"]:
+            return None
+
+
 class TestDashboard(unittest.TestCase):
 
     def test_existing_json_endpoints_preserved(self):
@@ -73,8 +86,8 @@ class TestDashboard(unittest.TestCase):
             {"name": name, "contact_email": "", "notes": ""},
         )
         self.assertEqual(status, 200)
-        clients = api_json("/clients?limit=100")["items"]
-        client = next(c for c in clients if c["name"] == name)
+        client = find_client_by_name(name)
+        self.assertIsNotNone(client, f"created client {name!r} not found in API")
 
         status, body = http_get(f"/dashboard/clients/{client['id']}")
         self.assertEqual(status, 200)
@@ -100,10 +113,9 @@ class TestDashboard(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertTrue(final_url.endswith("/dashboard/clients"))
-        clients = api_json("/clients?limit=100")["items"]
-        match = [c for c in clients if c["name"] == name]
-        self.assertEqual(len(match), 1)
-        self.assertEqual(match[0]["contact_email"], "ops@example.com")
+        client = find_client_by_name(name)
+        self.assertIsNotNone(client)
+        self.assertEqual(client["contact_email"], "ops@example.com")
 
     def test_create_client_invalid_returns_422(self):
         status, body, _ = http_post_form(
@@ -111,6 +123,9 @@ class TestDashboard(unittest.TestCase):
         )
         self.assertEqual(status, 422)
         self.assertIn("alert-error", body)
+        # Page-level error should appear exactly once, not per row
+        self.assertEqual(body.count('alert alert-error'), 1,
+                         "page-level error leaked into client rows")
 
     def test_create_application_form(self):
         name = f"appclient-{uuid.uuid4().hex[:8]}"
@@ -118,8 +133,8 @@ class TestDashboard(unittest.TestCase):
             "/dashboard/clients",
             {"name": name, "contact_email": "", "notes": ""},
         )
-        clients = api_json("/clients?limit=100")["items"]
-        client = next(c for c in clients if c["name"] == name)
+        client = find_client_by_name(name)
+        self.assertIsNotNone(client)
 
         status, _, final_url = http_post_form(
             f"/dashboard/clients/{client['id']}/applications",
@@ -143,8 +158,8 @@ class TestDashboard(unittest.TestCase):
             "/dashboard/clients",
             {"name": name, "contact_email": "", "notes": ""},
         )
-        clients = api_json("/clients?limit=100")["items"]
-        client = next(c for c in clients if c["name"] == name)
+        client = find_client_by_name(name)
+        self.assertIsNotNone(client)
 
         status, body, _ = http_post_form(
             f"/dashboard/clients/{client['id']}/applications",

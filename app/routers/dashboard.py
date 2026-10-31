@@ -51,9 +51,9 @@ def dashboard_home(request: Request, db: Session = Depends(get_db)):
         select(Application).order_by(Application.id.desc()).limit(5)
     ).all()
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "stats": stats,
             "recent_clients": recent_clients,
             "recent_applications": recent_applications,
@@ -66,8 +66,9 @@ def dashboard_home(request: Request, db: Session = Depends(get_db)):
 def list_clients_page(request: Request, db: Session = Depends(get_db)):
     clients = db.scalars(select(Client).order_by(Client.id)).all()
     return templates.TemplateResponse(
+        request,
         "clients/list.html",
-        {"request": request, "clients": clients, "nav": "clients"},
+        {"clients": clients, "nav": "clients"},
     )
 
 
@@ -82,9 +83,9 @@ def client_detail_page(
         .order_by(Application.id)
     ).all()
     return templates.TemplateResponse(
+        request,
         "clients/detail.html",
         {
-            "request": request,
             "client": client,
             "applications": applications,
             "nav": "clients",
@@ -97,7 +98,7 @@ def client_detail_page(
 @router.post("/clients")
 def create_client_form(
     request: Request,
-    name: str = Form(...),
+    name: str = Form(""),
     contact_email: str = Form(""),
     notes: str = Form(""),
     db: Session = Depends(get_db),
@@ -111,8 +112,9 @@ def create_client_form(
     except Exception as exc:
         clients = db.scalars(select(Client).order_by(Client.id)).all()
         return templates.TemplateResponse(
+            request,
             "clients/list.html",
-            {"request": request, "clients": clients, "nav": "clients", "error": str(exc)},
+            {"clients": clients, "nav": "clients", "error": str(exc)},
             status_code=422,
         )
     client = Client(
@@ -130,7 +132,7 @@ def create_client_form(
 def edit_client_form(
     client_id: int,
     request: Request,
-    name: str = Form(...),
+    name: str = Form(""),
     contact_email: str = Form(""),
     notes: str = Form(""),
     db: Session = Depends(get_db),
@@ -144,8 +146,9 @@ def edit_client_form(
         )
     except Exception as exc:
         return templates.TemplateResponse(
+            request,
             "partials/client_row.html",
-            {"request": request, "client": client, "error": str(exc)},
+            {"client": client, "row_error": str(exc)},
             status_code=422,
         )
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -154,8 +157,9 @@ def edit_client_form(
     db.refresh(client)
     if _is_htmx(request):
         return templates.TemplateResponse(
+            request,
             "partials/client_row.html",
-            {"request": request, "client": client},
+            {"client": client},
         )
     return RedirectResponse(url=f"/dashboard/clients/{client_id}", status_code=303)
 
@@ -164,9 +168,9 @@ def edit_client_form(
 def create_application_form(
     client_id: int,
     request: Request,
-    name: str = Form(...),
-    base_url: str = Form(...),
-    environment: str = Form(...),
+    name: str = Form(""),
+    base_url: str = Form(""),
+    environment: str = Form(""),
     status: str = Form("active"),
     description: str = Form(""),
     db: Session = Depends(get_db),
@@ -187,9 +191,9 @@ def create_application_form(
             .order_by(Application.id)
         ).all()
         return templates.TemplateResponse(
+            request,
             "clients/detail.html",
             {
-                "request": request,
                 "client": client,
                 "applications": applications,
                 "nav": "clients",
@@ -210,10 +214,10 @@ def create_application_form(
 def edit_application_form(
     application_id: int,
     request: Request,
-    name: str = Form(...),
-    base_url: str = Form(...),
-    environment: str = Form(...),
-    status: str = Form(...),
+    name: str = Form(""),
+    base_url: str = Form(""),
+    environment: str = Form(""),
+    status: str = Form(""),
     description: str = Form(""),
     db: Session = Depends(get_db),
 ):
@@ -228,13 +232,13 @@ def edit_application_form(
         )
     except Exception as exc:
         return templates.TemplateResponse(
+            request,
             "partials/application_row.html",
             {
-                "request": request,
                 "application": application,
                 "environments": ENVIRONMENTS,
                 "statuses": STATUSES,
-                "error": str(exc),
+                "row_error": str(exc),
             },
             status_code=422,
         )
@@ -244,9 +248,9 @@ def edit_application_form(
     db.refresh(application)
     if _is_htmx(request):
         return templates.TemplateResponse(
+            request,
             "partials/application_row.html",
             {
-                "request": request,
                 "application": application,
                 "environments": ENVIRONMENTS,
                 "statuses": STATUSES,

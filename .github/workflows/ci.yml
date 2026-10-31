@@ -1,0 +1,54 @@
+name: Cloud Portfolio CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Build and Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Create environment file
+        run: cp .env.example .env
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+
+      - name: Build and start services
+        run: docker compose up -d --build
+
+      - name: Wait for API
+        run: |
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://localhost:8080/health; then
+              echo
+              echo "API is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "API did not become healthy"
+          docker compose ps
+          exit 1
+
+      - name: Run integration tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Clean up
+        if: always()
+        run: docker compose down --volumes --remove-orphans

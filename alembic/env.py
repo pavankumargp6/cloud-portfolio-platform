@@ -17,6 +17,7 @@ config.set_main_option("sqlalchemy.url", DATABASE_URL)
 from app.models.base import Base  # noqa: E402
 from app.models import (  # noqa: F401,E402
     application,
+    backup,
     check_result,
     client,
     incident,

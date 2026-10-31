@@ -72,6 +72,13 @@ class WorkerTestBase(unittest.TestCase):
 
 class TestPickDue(WorkerTestBase):
 
+    def setUp(self):
+        super().setUp()
+        # Clear any enabled monitoring rows from prior tests so pick_due
+        # sees only what this test creates.
+        self.db.query(ApplicationMonitoring).filter_by(enabled=True).delete()
+        self.db.commit()
+
     def test_picks_due_app(self):
         app, _ = self._create_enabled_app(next_offset=-60)
         self.db.commit()
@@ -199,6 +206,11 @@ class TestReschedule(WorkerTestBase):
 
 
 class TestRunOnce(WorkerTestBase):
+
+    def setUp(self):
+        super().setUp()
+        self.db.query(ApplicationMonitoring).filter_by(enabled=True).delete()
+        self.db.commit()
 
     def test_orchestrates_one_iteration(self):
         app, _ = self._create_enabled_app(next_offset=-60, interval=180)

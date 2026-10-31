@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.application import Application
+from app.models.client import Client  # noqa: F401 — resolves Application.client mapper
 from app.models.check_result import CheckResult
 from app.models.monitoring import ApplicationHealthState, ApplicationMonitoring
 from app.monitoring.probe import ProbeOutcome

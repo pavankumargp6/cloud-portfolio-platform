@@ -14,6 +14,8 @@ from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.schemas.client import ClientCreate, ClientUpdate
 from app.services.dashboard import get_dashboard_stats
 from app.services import monitoring as svc
+from app.services import incidents as inc_svc
+from app.models.incident import Incident
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -86,6 +88,18 @@ def client_detail_page(
     # Fetch monitoring state for each app (single query per app is fine for
     # a small number of applications per client; can be optimized later).
     monitoring = {app.id: svc.get_snapshot(db, app.id) for app in applications}
+    
+    # Fetch incidents for these apps
+    app_ids = [app.id for app in applications]
+    incidents = []
+    if app_ids:
+        incidents = db.scalars(
+            select(Incident)
+            .where(Incident.application_id.in_(app_ids))
+            .order_by(Incident.started_at.desc())
+            .limit(10)
+        ).all()
+
     return templates.TemplateResponse(
         request,
         "clients/detail.html",
@@ -93,6 +107,7 @@ def client_detail_page(
             "client": client,
             "applications": applications,
             "monitoring": monitoring,
+            "incidents": incidents,
             "nav": "clients",
             "environments": ENVIRONMENTS,
             "statuses": STATUSES,
@@ -354,3 +369,29 @@ def run_now_htmx(application_id: int, request: Request, db: Session = Depends(ge
     except svc.ApplicationNotFoundError:
         raise HTTPException(status_code=404, detail="Application not found")
     return _render_monitoring_panel(request, db, application_id, error=error)
+
+@router.post("/incidents/{incident_id}/acknowledge")
+def acknowledge_incident_htmx(incident_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        inc_svc.acknowledge_incident(db, incident_id, by="Dashboard User")
+    except inc_svc.IncidentError as e:
+        logger.warning(f"Failed to acknowledge incident: {e}")
+    
+    # Redirect back to the referring page (or root if missing)
+    referer = request.headers.get("referer", "/dashboard/")
+    return RedirectResponse(url=referer, status_code=303)
+
+@router.post("/incidents/{incident_id}/resolve")
+def resolve_incident_htmx(
+    incident_id: int, 
+    request: Request, 
+    notes: str = Form(""), 
+    db: Session = Depends(get_db)
+):
+    try:
+        inc_svc.resolve_incident(db, incident_id, by="Dashboard User", notes=notes or "Resolved via dashboard")
+    except inc_svc.IncidentError as e:
+        logger.warning(f"Failed to resolve incident: {e}")
+        
+    referer = request.headers.get("referer", "/dashboard/")
+    return RedirectResponse(url=referer, status_code=303)

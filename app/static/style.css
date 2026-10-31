@@ -307,3 +307,8 @@ form button:hover { background: var(--accent-strong); }
   align-items: center;
   margin-top: 1rem;
 }
+
+/* Incident Badges */
+.badge.status-open { background: #fee2e2; color: #991b1b; }
+.badge.status-acknowledged { background: var(--amber-bg); color: var(--amber); }
+.badge.status-resolved { background: var(--green-bg); color: var(--green); }

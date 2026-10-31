@@ -26,6 +26,60 @@
 </section>
 
 <section class="panel">
+  <h2>Recent Incidents</h2>
+  {% if incidents %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Started</th>
+        <th>App ID</th>
+        <th>Resolved/Ack</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for inc in incidents %}
+      <tr>
+        <td>
+          <span class="badge status-{{ inc.status }}">
+            {{ inc.status | upper }}
+          </span>
+        </td>
+        <td>{{ inc.started_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td><a href="#application-{{ inc.application_id }}">App #{{ inc.application_id }}</a></td>
+        <td>
+          {% if inc.status == 'resolved' %}
+            {{ inc.resolved_at.strftime("%H:%M") }} by {{ inc.resolved_by }}
+          {% elif inc.status == 'acknowledged' %}
+            {{ inc.acknowledged_at.strftime("%H:%M") }} by {{ inc.acknowledged_by }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>
+          {% if inc.status == 'open' %}
+          <form method="post" action="/dashboard/incidents/{{ inc.id }}/acknowledge" style="display:inline;">
+            <button type="submit" class="btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">Acknowledge</button>
+          </form>
+          {% endif %}
+          {% if inc.status != 'resolved' %}
+          <form method="post" action="/dashboard/incidents/{{ inc.id }}/resolve" style="display:inline; margin-left: 0.5rem;">
+            <input type="hidden" name="notes" value="Manually resolved via dashboard">
+            <button type="submit" class="btn-primary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">Resolve</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No incidents recorded.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h2>Applications</h2>
   <details class="create-panel">
     <summary>Add application</summary>

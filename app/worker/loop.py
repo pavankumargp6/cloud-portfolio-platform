@@ -17,6 +17,7 @@ from app.monitoring.errors import SSRFError
 from app.monitoring.probe import ProbeOutcome, probe as real_probe
 from app.monitoring.retention import maybe_prune
 from app.monitoring.scheduler import pick_due, record_outcome, reschedule
+from app.services.incidents import handle_transition as handle_incidents
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,14 @@ def run_once(
             final_url=app.base_url,
         )
 
+    # Define the transition hook. It has access to `db` and `app` via closure.
+    def _transition_hook(from_status: str, to_status: str) -> None:
+        handle_incidents(db, app.id, from_status, to_status, commit=False)
+        if on_transition:
+            on_transition(from_status, to_status)
+
     record_outcome(
-        db, app.id, outcome, on_transition=on_transition, checked_at=checked_at
+        db, app.id, outcome, on_transition=_transition_hook, checked_at=checked_at
     )
     reschedule(db, app.id, checked_at=checked_at)
     db.commit()

@@ -92,6 +92,7 @@ def open_incident(
     *,
     reason: Optional[str] = None,
     started_at: Optional[datetime] = None,
+    commit: bool = True,
 ) -> Incident:
     """Open a new incident for the application.
 
@@ -110,7 +111,10 @@ def open_incident(
     db.add(incident)
     db.flush()
     _add_event(db, incident, "opened", details=reason)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(incident)
     logger.info(
         "opened incident %d for application %d (reason=%r)",
@@ -124,6 +128,7 @@ def acknowledge_incident(
     incident_id: int,
     *,
     by: Optional[str] = None,
+    commit: bool = True,
 ) -> Incident:
     incident = db.get(Incident, incident_id)
     if incident is None:
@@ -137,7 +142,10 @@ def acknowledge_incident(
     _add_event(
         db, incident, "acknowledged", details=f"by {by}" if by else None
     )
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(incident)
     return incident
 
@@ -149,6 +157,7 @@ def resolve_incident(
     by: Optional[str] = None,
     notes: Optional[str] = None,
     resolved_at: Optional[datetime] = None,
+    commit: bool = True,
 ) -> Incident:
     incident = db.get(Incident, incident_id)
     if incident is None:
@@ -166,7 +175,10 @@ def resolve_incident(
         "resolved",
         details=notes or (f"by {by}" if by else None),
     )
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(incident)
     logger.info(
         "resolved incident %d (by=%r, has_notes=%s)",
@@ -193,6 +205,7 @@ def handle_transition(
                 db,
                 application_id,
                 reason=f"State transition {from_status} -> {to_status}",
+                commit=False,
             )
         except AlreadyOpenError as exc:
             logger.warning(
@@ -215,6 +228,7 @@ def handle_transition(
                 existing.id,
                 by="system",
                 notes="Auto-resolved on recovery",
+                commit=False,
             )
         except InvalidIncidentStateError:
             # Possible race: someone else resolved between _find and resolve

@@ -26,6 +26,7 @@ from app.models.monitoring import ApplicationHealthState, ApplicationMonitoring
 from app.monitoring.errors import SSRFError
 from app.monitoring.ssrf import resolve_and_validate
 from app.monitoring.state import HealthState, apply_threshold_change
+from app.services.incidents import handle_transition as handle_incidents
 
 logger = logging.getLogger(__name__)
 
@@ -194,14 +195,15 @@ def update_config(
             db.flush()
         current = HealthState(state.current_status, state.consecutive_failures)
 
-        def log_transition(f: str, t: str) -> None:
+        def threshold_transition_hook(f: str, t: str) -> None:
             logger.info(
                 "application %d state transition %s -> %s (threshold change)",
                 application_id, f, t,
             )
+            handle_incidents(db, application_id, f, t, commit=False)
 
         new_state = apply_threshold_change(
-            current, mon.failure_threshold, on_transition=log_transition
+            current, mon.failure_threshold, on_transition=threshold_transition_hook
         )
         if new_state.status != current.status:
             state.current_status = new_state.status

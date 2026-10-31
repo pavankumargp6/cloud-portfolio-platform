@@ -225,3 +225,58 @@ class TestListIncidents(IncidentTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWorkerIncidentIntegration(IncidentTestBase):
+    """Verifies the worker's on_transition hook actually creates and resolves incidents."""
+
+    def setUp(self):
+        super().setUp()
+        from app.models.monitoring import ApplicationMonitoring
+        from datetime import datetime, timezone, timedelta
+
+        # Enable monitoring with threshold 1 for immediate transitions
+        mon = ApplicationMonitoring(
+            application_id=self.app_id,
+            enabled=True,
+            interval_seconds=300,
+            failure_threshold=1,
+            next_check_at=datetime.now(timezone.utc) - timedelta(seconds=60)
+        )
+        self.db.add(mon)
+        self.db.commit()
+
+    def test_worker_down_then_up_transitions_incident(self):
+        from app.worker.loop import run_once
+        from app.monitoring.probe import ProbeOutcome
+        from app.models.monitoring import ApplicationMonitoring
+        from datetime import datetime, timezone, timedelta
+
+        # 1. Fake probe: down
+        def fake_probe_down(url):
+            return ProbeOutcome(status="down", failure_reason="timeout")
+
+        worked = run_once(self.db, probe_fn=fake_probe_down)
+        self.assertTrue(worked)
+
+        # Verify incident opened
+        incidents = self.db.query(Incident).filter_by(application_id=self.app_id).all()
+        self.assertEqual(len(incidents), 1)
+        self.assertEqual(incidents[0].status, "open")
+
+        # 2. Advance time and fake probe: up
+        mon = self.db.get(ApplicationMonitoring, self.app_id)
+        mon.next_check_at = datetime.now(timezone.utc) - timedelta(seconds=60)
+        self.db.commit()
+
+        def fake_probe_up(url):
+            return ProbeOutcome(status="up")
+
+        worked = run_once(self.db, probe_fn=fake_probe_up)
+        self.assertTrue(worked)
+
+        # Verify incident resolved
+        incidents = self.db.query(Incident).filter_by(application_id=self.app_id).all()
+        self.assertEqual(len(incidents), 1)
+        self.assertEqual(incidents[0].status, "resolved")
+        self.assertEqual(incidents[0].resolved_by, "system")

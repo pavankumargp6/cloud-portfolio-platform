@@ -250,7 +250,7 @@ class TestBackupAPI(unittest.TestCase):
             self.assertEqual(exc.code, 404)
 
 
-class TestBackupDashboardIntegration(IncidentTestBase):
+class TestBackupDashboardIntegration(BackupTestBase):
     """Tests the backup UI on the dashboard."""
 
     def test_backup_status_renders(self):
@@ -333,15 +333,19 @@ class TestBackupDashboardIntegration(IncidentTestBase):
         rec = svc.record_backup(self.db, app["id"], "database", "s3://bucket/good.sql")
         self.db.commit()
 
-        # 3. Verify it via the dashboard route
+        # 3. Trigger verification via the dashboard route
         req = urllib.request.Request(
             BASE_URL + f"/dashboard/backups/{rec.id}/verify",
             data=b"",
             method="POST"
         )
-        # Use urllib to POST (it might redirect to the detail page, which is fine)
+        with urllib.request.urlopen(req) as resp:
+            pass # We ignore the redirect response
+
+        # 4. Fetch the Client Detail page to verify the UI
+        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
         with urllib.request.urlopen(req) as resp:
             html = resp.read().decode()
 
-        # 4. The final page should show "✓ Verified"
+        # 5. The page should show "✓ Verified"
         self.assertIn("✓ Verified", html)

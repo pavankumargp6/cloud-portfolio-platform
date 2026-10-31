@@ -15,6 +15,7 @@ from app.schemas.client import ClientCreate, ClientUpdate
 from app.services.dashboard import get_dashboard_stats
 from app.services import monitoring as svc
 from app.services import incidents as inc_svc
+from app.services import backups as bk_svc
 from app.models.incident import Incident
 from app.models.notification import NotificationLog
 
@@ -90,8 +91,18 @@ def client_detail_page(
     # a small number of applications per client; can be optimized later).
     monitoring = {app.id: svc.get_snapshot(db, app.id) for app in applications}
     
-    # Fetch incidents for these apps
+    # Fetch backups for these apps
     app_ids = [app.id for app in applications]
+    backups = {}
+    if app_ids:
+        for aid in app_ids:
+            bk_records, _ = bk_svc.list_backups(db, aid, limit=5)
+            backups[aid] = [
+                {"record": r, "latest": bk_svc.get_latest_verification(db, r.id)}
+                for r in bk_records
+            ]
+
+    # Fetch incidents for these apps
     incidents = []
     notif_logs = {}
     if app_ids:
@@ -123,6 +134,7 @@ def client_detail_page(
             "monitoring": monitoring,
             "incidents": incidents,
             "notif_logs": notif_logs,
+            "backups": backups,
             "nav": "clients",
             "environments": ENVIRONMENTS,
             "statuses": STATUSES,
@@ -408,5 +420,19 @@ def resolve_incident_htmx(
     except inc_svc.IncidentError as e:
         logger.warning(f"Failed to resolve incident: {e}")
         
+    referer = request.headers.get("referer", "/dashboard/")
+    return RedirectResponse(url=referer, status_code=303)
+
+@router.post("/backups/{backup_id}/verify")
+def verify_backup_htmx(
+    backup_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    try:
+        bk_svc.verify_backup(db, backup_id)
+    except ValueError as e:
+        logger.warning(f"Failed to verify backup: {e}")
+
     referer = request.headers.get("referer", "/dashboard/")
     return RedirectResponse(url=referer, status_code=303)

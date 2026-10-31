@@ -96,6 +96,56 @@
 </section>
 
 <section class="panel">
+  <h2>Backups</h2>
+  {% for app in applications %}
+    {% if backups.get(app.id) %}
+      <div style="margin-bottom: 1.5rem;">
+        <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">{{ app.name }}</h3>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>Date</th>
+              <th>Verification</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in backups[app.id] %}
+            <tr>
+              <td><code style="font-size: 0.85rem;">{{ item.record.location }}</code></td>
+              <td>{{ item.record.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td>
+                {% if item.latest %}
+                  {% if item.latest.status == 'success' %}
+                    <span class="badge status-resolved">✓ Verified</span>
+                  {% else %}
+                    <span class="badge status-open" title="{{ item.latest.error_message }}">✗ Failed</span>
+                  {% endif %}
+                {% else %}
+                  <span class="badge status-archived">Unverified</span>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" action="/dashboard/backups/{{ item.record.id }}/verify">
+                  <button type="submit" class="btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">
+                    {% if item.latest %}Re-Verify{% else %}Verify{% endif %}
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  {% endfor %}
+  {% if not backups.values() or all(len(v)==0 for v in backups.values()) %}
+    <p class="empty">No backups recorded.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h2>Applications</h2>
   <details class="create-panel">
     <summary>Add application</summary>

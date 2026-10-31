@@ -248,3 +248,100 @@ class TestBackupAPI(unittest.TestCase):
             self.fail("Expected 404")
         except urllib.error.HTTPError as exc:
             self.assertEqual(exc.code, 404)
+
+
+class TestBackupDashboardIntegration(IncidentTestBase):
+    """Tests the backup UI on the dashboard."""
+
+    def test_backup_status_renders(self):
+        import urllib.request
+        import urllib.parse
+        import uuid
+        import json
+        BASE_URL = "http://localhost:8000"
+
+        # 1. Create client/app
+        req = urllib.request.Request(
+            BASE_URL + "/clients",
+            data=json.dumps({"name": f"bk-dash-{uuid.uuid4().hex[:6]}"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            client = json.loads(resp.read())
+
+        req = urllib.request.Request(
+            BASE_URL + f"/clients/{client['id']}/applications",
+            data=json.dumps({
+                "name": "bk-dash-app",
+                "base_url": "https://1.1.1.1/",
+                "environment": "production"
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            app = json.loads(resp.read())
+
+        # 2. Create a backup and verify it (via service)
+        rec = svc.record_backup(self.db, app["id"], "database", "s3://bucket/corrupt.sql")
+        self.db.commit()
+        svc.verify_backup(self.db, rec.id)
+
+        # 3. Fetch dashboard HTML
+        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
+        with urllib.request.urlopen(req) as resp:
+            html = resp.read().decode()
+
+        # Verify the UI elements are present
+        self.assertIn("Backups", html)
+        self.assertIn("s3://bucket/corrupt.sql", html)
+        self.assertIn("✗ Failed", html)
+        self.assertIn("Re-Verify", html)
+
+    def test_verify_backup_via_dashboard(self):
+        import urllib.request
+        import urllib.parse
+        import uuid
+        import json
+        BASE_URL = "http://localhost:8000"
+
+        # 1. Create client/app
+        req = urllib.request.Request(
+            BASE_URL + "/clients",
+            data=json.dumps({"name": f"bk-dash-{uuid.uuid4().hex[:6]}"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            client = json.loads(resp.read())
+
+        req = urllib.request.Request(
+            BASE_URL + f"/clients/{client['id']}/applications",
+            data=json.dumps({
+                "name": "bk-dash-app",
+                "base_url": "https://1.1.1.1/",
+                "environment": "production"
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            app = json.loads(resp.read())
+
+        # 2. Create a valid backup (unverified)
+        rec = svc.record_backup(self.db, app["id"], "database", "s3://bucket/good.sql")
+        self.db.commit()
+
+        # 3. Verify it via the dashboard route
+        req = urllib.request.Request(
+            BASE_URL + f"/dashboard/backups/{rec.id}/verify",
+            data=b"",
+            method="POST"
+        )
+        # Use urllib to POST (it might redirect to the detail page, which is fine)
+        with urllib.request.urlopen(req) as resp:
+            html = resp.read().decode()
+
+        # 4. The final page should show "✓ Verified"
+        self.assertIn("✓ Verified", html)

@@ -155,6 +155,80 @@ class _LocalHTTPServer:
         return f"http://127.0.0.1:{self.port}"
 
 
+class _LocalHTTPSServer:
+    """HTTPS version of _LocalHTTPServer. Requires cert_file and key_file."""
+
+    def __init__(self, routes, cert_file, key_file):
+        self._routes = routes
+        self._cert_file = Path(cert_file)
+        self._key_file = Path(key_file)
+        self._server = None
+
+    def __enter__(self):
+        routes = self._routes
+        cert_path = str(self._cert_file)
+        key_path = str(self._key_file)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                route = routes.get(self.path)
+                if route is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                action, arg = route
+                if action == "ok":
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+
+        class _TLSServer(http.server.HTTPServer):
+            def __init__(self, addr, handler):
+                super().__init__(addr, handler)
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(cert_path, key_path)
+                self._tls_ctx = ctx
+
+            def get_request(self):
+                raw_sock, addr = self.socket.accept()
+                wrapped = self._tls_ctx.wrap_socket(raw_sock, server_side=True)
+                return wrapped, addr
+
+        self._server = _TLSServer(("127.0.0.1", 0), Handler)
+        t = threading.Thread(target=self._server.serve_forever, daemon=True)
+        t.start()
+        return self
+
+    def __exit__(self, *args):
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+
+    @property
+    def port(self):
+        return self._server.server_address[1]
+
+    @property
+    def base_url(self):
+        return f"https://127.0.0.1:{self.port}"
+
+
+def ensure_tls_fixtures():
+    """Ensure tests/_tls_fixtures/{ca.pem,server.pem,server.key} exist."""
+    fixtures = Path(__file__).parent / "_tls_fixtures"
+    if (fixtures / "ca.pem").exists() and (fixtures / "server.pem").exists():
+        return
+    fixtures.mkdir(exist_ok=True)
+    script = fixtures / "generate.sh"
+    if not script.exists():
+        raise RuntimeError(f"TLS fixture generator missing: {script}")
+    import subprocess
+    subprocess.run(["sh", str(script)], check=True)
+
+
 # =============================================================================
 # Section 5.1 — Scheme and syntax (12 cases)
 # =============================================================================
@@ -380,7 +454,7 @@ class TestProbeRedirects(ProbeTestBase):
 
     def test_t39_redirect_to_loopback(self):
         with _LocalHTTPServer({
-            "/r1": ("redirect", "http://127.0.0.1:9999/"),
+            "/r1": ("redirect", "http://127.0.0.1/"),
         }) as srv:
             with self.assertRaises(Exception) as ctx:
                 probe(
@@ -470,22 +544,34 @@ class TestProbeNetwork(ProbeTestBase):
         self.assertEqual(outcome.failure_reason, "connect_refused")
 
     def test_t45_tls_verification_failed(self):
-        # Self-signed cert on the server side is rejected by strict verification
+        # HTTPS server with self-signed cert; probe does NOT trust it.
+        ensure_tls_fixtures()
         cert_dir = Path(__file__).parent / "_tls_fixtures"
-        cert_file = cert_dir / "server.pem"
-        key_file = cert_dir / "server.key"
-        if not (cert_file.exists() and key_file.exists()):
-            self.skipTest("TLS fixtures not generated yet (Phase 3)")
-        outcome = probe(
-            f"https://127.0.0.1:1/",  # port 1 unused; test is the CERT, not the port
-            _test_bypass_initial_ssrf=True,
-            _test_ssl_ca=str(cert_file),  # do NOT trust it -> verification fails
-        )
-        self.assertIn(outcome.status, ("tls_error", "down"))
+        with _LocalHTTPSServer(
+            {"/ok": ("ok", None)},
+            cert_file=cert_dir / "server.pem",
+            key_file=cert_dir / "server.key",
+        ) as srv:
+            outcome = probe(f"{srv.base_url}/ok", _test_bypass_initial_ssrf=True)
+        self.assertEqual(outcome.status, "tls_error")
+        self.assertEqual(outcome.failure_reason, "tls_verify_failed")
 
     def test_t46_valid_cert(self):
-        # Requires an HTTPS server with a CA-signed cert we generate at Phase 3.
-        self.skipTest("TLS valid-cert test enabled in Phase 3 with generated fixtures")
+        # HTTPS server with self-signed cert; probe trusts the test CA.
+        ensure_tls_fixtures()
+        cert_dir = Path(__file__).parent / "_tls_fixtures"
+        with _LocalHTTPSServer(
+            {"/ok": ("ok", None)},
+            cert_file=cert_dir / "server.pem",
+            key_file=cert_dir / "server.key",
+        ) as srv:
+            outcome = probe(
+                f"{srv.base_url}/ok",
+                _test_bypass_initial_ssrf=True,
+                _test_ssl_ca=str(cert_dir / "ca.pem"),
+            )
+        self.assertEqual(outcome.status, "up")
+        self.assertIsNotNone(outcome.ssl_expires_at)
 
     def test_t47_204_no_content(self):
         with _LocalHTTPServer({"/empty": ("empty", None)}) as srv:

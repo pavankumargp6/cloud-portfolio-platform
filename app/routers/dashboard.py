@@ -16,6 +16,7 @@ from app.services.dashboard import get_dashboard_stats
 from app.services import monitoring as svc
 from app.services import incidents as inc_svc
 from app.models.incident import Incident
+from app.models.notification import NotificationLog
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -92,6 +93,7 @@ def client_detail_page(
     # Fetch incidents for these apps
     app_ids = [app.id for app in applications]
     incidents = []
+    notif_logs = {}
     if app_ids:
         incidents = db.scalars(
             select(Incident)
@@ -99,6 +101,18 @@ def client_detail_page(
             .order_by(Incident.started_at.desc())
             .limit(10)
         ).all()
+
+        if incidents:
+            inc_ids = [i.id for i in incidents]
+            logs = db.scalars(
+                select(NotificationLog)
+                .where(NotificationLog.incident_id.in_(inc_ids))
+                .order_by(NotificationLog.sent_at.desc())
+            ).all()
+            for log in logs:
+                if log.incident_id not in notif_logs:
+                    notif_logs[log.incident_id] = []
+                notif_logs[log.incident_id].append(log)
 
     return templates.TemplateResponse(
         request,
@@ -108,6 +122,7 @@ def client_detail_page(
             "applications": applications,
             "monitoring": monitoring,
             "incidents": incidents,
+            "notif_logs": notif_logs,
             "nav": "clients",
             "environments": ENVIRONMENTS,
             "statuses": STATUSES,

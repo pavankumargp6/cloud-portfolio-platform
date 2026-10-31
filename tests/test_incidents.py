@@ -416,3 +416,50 @@ class TestNotifications(IncidentTestBase):
         self.assertEqual(len(logs), 2) # One for open, one for resolve
         self.assertEqual(logs[1].status, "sent")
         self.assertEqual(logs[1].notification_type, "incident_resolved")
+
+
+class TestNotificationDashboardIntegration(IncidentTestBase):
+    """Tests that notification logs appear on the dashboard."""
+
+    def test_notification_log_renders_in_incident_table(self):
+        import urllib.request
+        import uuid
+        import json
+        BASE_URL = "http://localhost:8000"
+
+        # 1. Create client/app
+        req = urllib.request.Request(
+            BASE_URL + "/clients",
+            data=json.dumps({"name": f"notif-dash-{uuid.uuid4().hex[:6]}"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            client = json.loads(resp.read())
+
+        req = urllib.request.Request(
+            BASE_URL + f"/clients/{client['id']}/applications",
+            data=json.dumps({
+                "name": "notif-app",
+                "base_url": "https://1.1.1.1/",
+                "environment": "production"
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            app = json.loads(resp.read())
+
+        # 2. Open incident -> this triggers the notification log automatically
+        inc = svc.open_incident(self.db, app["id"], reason="Test incident")
+        self.db.commit()
+
+        # 3. Fetch dashboard HTML
+        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
+        with urllib.request.urlopen(req) as resp:
+            html = resp.read().decode()
+
+        # Verify the email recipient is shown in the alerts column
+        self.assertIn("Alerts Sent", html)
+        self.assertIn("ops@agency.local", html)
+        self.assertIn("✓", html) # the green checkmark for sent status

@@ -35,6 +35,7 @@
         <th>Started</th>
         <th>App ID</th>
         <th>Resolved/Ack</th>
+        <th>Alerts Sent</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -55,6 +56,21 @@
             {{ inc.acknowledged_at.strftime("%H:%M") }} by {{ inc.acknowledged_by }}
           {% else %}
             -
+          {% endif %}
+        </td>
+        <td>
+          {% if notif_logs.get(inc.id) %}
+            {% for log in notif_logs[inc.id] %}
+              <div style="font-size: 0.8rem; margin-bottom: 0.2rem;" title="{{ log.notification_type }}">
+                {% if log.status == 'sent' %}
+                  <span style="color: var(--green);">✓</span> {{ log.recipient }}
+                {% else %}
+                  <span style="color: var(--danger);" title="{{ log.error_message }}">✗ Failed</span>
+                {% endif %}
+              </div>
+            {% endfor %}
+          {% else %}
+            <span style="color: var(--muted);">—</span>
           {% endif %}
         </td>
         <td>

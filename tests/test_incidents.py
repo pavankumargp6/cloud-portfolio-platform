@@ -388,3 +388,31 @@ class TestIncidentDashboardIntegration(IncidentTestBase):
         updated_inc = self.db.get(Incident, inc_id)
         self.assertEqual(updated_inc.status, "acknowledged")
         self.assertEqual(updated_inc.acknowledged_by, "Dashboard User")
+
+
+class TestNotifications(IncidentTestBase):
+
+    def test_open_incident_sends_email(self):
+        from app.models.notification import NotificationLog
+        
+        inc = svc.open_incident(self.db, self.app_id, reason="Manual")
+        self.db.commit()
+
+        logs = self.db.query(NotificationLog).filter_by(incident_id=inc.id).all()
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].status, "sent")
+        self.assertEqual(logs[0].notification_type, "incident_opened")
+
+    def test_resolve_incident_sends_email(self):
+        from app.models.notification import NotificationLog
+        
+        inc = svc.open_incident(self.db, self.app_id, reason="Manual")
+        self.db.commit()
+        
+        svc.resolve_incident(self.db, inc.id, by="Test", notes="Fixed")
+        self.db.commit()
+
+        logs = self.db.query(NotificationLog).filter_by(incident_id=inc.id).all()
+        self.assertEqual(len(logs), 2) # One for open, one for resolve
+        self.assertEqual(logs[1].status, "sent")
+        self.assertEqual(logs[1].notification_type, "incident_resolved")

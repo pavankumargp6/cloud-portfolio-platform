@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.incident import Incident, IncidentEvent
+from app.services import notifications as notif_svc
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ def open_incident(
         "opened incident %d for application %d (reason=%r)",
         incident.id, application_id, reason,
     )
+    notif_svc.notify_incident_opened(db, incident)
     return incident
 
 
@@ -184,6 +186,7 @@ def resolve_incident(
         "resolved incident %d (by=%r, has_notes=%s)",
         incident.id, by, notes is not None,
     )
+    notif_svc.notify_incident_resolved(db, incident)
     return incident
 
 

@@ -23,11 +23,11 @@ class ConsoleBackend:
     """Prints emails to the console. Default for local dev."""
 
     def send(self, to: str, subject: str, body: str) -> None:
-        logger.info("=== MOCK EMAIL ===")
-        logger.info("To: %s", to)
-        logger.info("Subject: %s", subject)
-        logger.info("Body:\n%s", body)
-        logger.info("==================")
+        print("\n=== MOCK EMAIL ===", flush=True)
+        print(f"To: {to}", flush=True)
+        print(f"Subject: {subject}", flush=True)
+        print(f"Body:\n{body}", flush=True)
+        print("==================\n", flush=True)
 
 
 class SMTPBackend:

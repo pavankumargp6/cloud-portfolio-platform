@@ -192,6 +192,8 @@ def handle_transition(
     application_id: int,
     from_status: str,
     to_status: str,
+    *,
+    commit: bool = True,
 ) -> None:
     """React to a health-state transition. Called from worker and dashboard.
 
@@ -205,7 +207,7 @@ def handle_transition(
                 db,
                 application_id,
                 reason=f"State transition {from_status} -> {to_status}",
-                commit=False,
+                commit=commit,
             )
         except AlreadyOpenError as exc:
             logger.warning(
@@ -228,7 +230,7 @@ def handle_transition(
                 existing.id,
                 by="system",
                 notes="Auto-resolved on recovery",
-                commit=False,
+                commit=commit,
             )
         except InvalidIncidentStateError:
             # Possible race: someone else resolved between _find and resolve

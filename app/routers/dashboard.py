@@ -13,6 +13,7 @@ from app.models.enums import ApplicationStatus, Environment
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.schemas.client import ClientCreate, ClientUpdate
 from app.services.dashboard import get_dashboard_stats
+from app.services import monitoring as svc
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -82,12 +83,16 @@ def client_detail_page(
         .where(Application.client_id == client_id)
         .order_by(Application.id)
     ).all()
+    # Fetch monitoring state for each app (single query per app is fine for
+    # a small number of applications per client; can be optimized later).
+    monitoring = {app.id: svc.get_snapshot(db, app.id) for app in applications}
     return templates.TemplateResponse(
         request,
         "clients/detail.html",
         {
             "client": client,
             "applications": applications,
+            "monitoring": monitoring,
             "nav": "clients",
             "environments": ENVIRONMENTS,
             "statuses": STATUSES,
@@ -259,3 +264,93 @@ def edit_application_form(
     return RedirectResponse(
         url=f"/dashboard/clients/{application.client_id}", status_code=303
     )
+
+# =============================================================================
+# Phase 8.2 — Monitoring dashboard routes (HTMX)
+# =============================================================================
+
+@router.get("/applications/{application_id}/checks", response_class=HTMLResponse)
+def application_checks_page(
+    application_id: int,
+    request: Request,
+    page: int = Query(1, ge=1),
+    db: Session = Depends(get_db),
+):
+    """Paginated history of checks for a single application."""
+    app = db.get(Application, application_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    limit = 20
+    offset = (page - 1) * limit
+    rows, total = svc.list_checks(db, application_id, limit, offset)
+    total_pages = (total + limit - 1) // limit if total > 0 else 1
+
+    snap = svc.get_snapshot(db, application_id)
+    return templates.TemplateResponse(
+        request,
+        "monitoring_checks.html",
+        {
+            "application": app,
+            "snapshot": snap,
+            "checks": rows,
+            "total": total,
+            "page": page,
+            "total_pages": total_pages,
+            "nav": "clients",
+        },
+    )
+
+
+def _render_monitoring_panel(request: Request, db: Session, application_id: int, error: str = None):
+    app = db.get(Application, application_id)
+    snap = svc.get_snapshot(db, application_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/monitoring_panel.html",
+        {"app": app, "monitoring": snap, "error": error},
+    )
+
+
+@router.post("/applications/{application_id}/monitoring/enable")
+def enable_monitoring_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        svc.update_config(db, application_id, {"enabled": True})
+    except svc.SSRFBlockedError as exc:
+        # Return the panel with an error so HTMX can swap it in-place
+        return _render_monitoring_panel(request, db, application_id, error=exc.message)
+    return _render_monitoring_panel(request, db, application_id)
+
+
+@router.post("/applications/{application_id}/monitoring/disable")
+def disable_monitoring_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+    svc.update_config(db, application_id, {"enabled": False})
+    return _render_monitoring_panel(request, db, application_id)
+
+
+@router.post("/applications/{application_id}/monitoring/interval")
+def update_interval_htmx(
+    application_id: int,
+    request: Request,
+    interval_seconds: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    try:
+        svc.update_config(db, application_id, {"interval_seconds": interval_seconds})
+    except svc.MonitoringError as exc:
+        return _render_monitoring_panel(request, db, application_id, error=str(exc))
+    return _render_monitoring_panel(request, db, application_id)
+
+
+@router.post("/applications/{application_id}/monitoring/run-now")
+def run_now_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        svc.request_immediate_check(db, application_id)
+        error = None
+    except svc.CooldownActiveError as exc:
+        error = f"Cooldown active. Retry in {exc.retry_after}s."
+    except svc.MonitoringDisabledError:
+        error = "Monitoring is disabled."
+    except svc.ApplicationNotFoundError:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return _render_monitoring_panel(request, db, application_id, error=error)

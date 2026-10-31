@@ -56,6 +56,18 @@
     <tbody>
       {% for application in applications %}
         {% include "partials/application_row.html" %}
+        <tr>
+          <td colspan="6" style="padding: 0; background: var(--bg);">
+            <details>
+              <summary style="padding: 0.5rem; cursor: pointer; color: var(--muted);">Monitoring: {{ monitoring[application.id].current_status | upper }}</summary>
+              <div style="padding: 1rem; border-top: 1px solid var(--border);">
+                {% with app=application, monitoring=monitoring[application.id], error=None %}
+                  {% include "partials/monitoring_panel.html" %}
+                {% endwith %}
+              </div>
+            </details>
+          </td>
+        </tr>
       {% else %}
         <tr><td colspan="6" class="empty">No applications yet.</td></tr>
       {% endfor %}

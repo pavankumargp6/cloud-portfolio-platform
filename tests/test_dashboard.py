@@ -7,6 +7,25 @@ import uuid
 
 BASE_URL = "http://localhost:8080"
 
+def api_request(path, method="GET", payload=None):
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(
+        BASE_URL + path, data=data, headers=headers, method=method
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read()
+            return resp.status, (json.loads(body) if body else None)
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        exc.close()
+        return exc.code, (json.loads(body) if body else None)
+
+
 
 def http_get(path):
     req = urllib.request.Request(BASE_URL + path)

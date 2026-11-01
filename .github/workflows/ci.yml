@@ -37,13 +37,26 @@ jobs:
             fi
             sleep 2
           done
-
           echo "API did not become healthy"
           docker compose ps
           exit 1
 
-      - name: Run integration tests
-        run: python3 -m unittest discover -s tests -v
+      - name: Run HTTP integration tests (host)
+        run: |
+          python3 -m unittest \
+            tests.test_api \
+            tests.test_clients \
+            tests.test_applications \
+            tests.test_dashboard \
+            tests.test_monitoring_api \
+            tests.test_monitoring_state \
+            -v
+
+      - name: Run SSRF acceptance tests (host)
+        run: python3 -m unittest tests.test_ssrf -v
+
+      - name: Run worker tests (inside container)
+        run: docker compose exec -T api python3 -m unittest tests.test_monitoring_worker tests.test_incidents tests.test_backups tests.test_reporting tests.test_agencies -v
 
       - name: Show logs on failure
         if: failure()

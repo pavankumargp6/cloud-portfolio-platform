@@ -17,6 +17,9 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./tests:/app/tests:ro
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +34,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  worker:
+    build: .
+    entrypoint: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      MONITORING_LOOP_SLEEP_SEC: "2"
+      MONITORING_RETENTION_DAYS: "30"
+      MONITORING_PRUNE_INTERVAL_HOURS: "24"
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+    stop_grace_period: 25s
 
   nginx:
     image: nginx:alpine

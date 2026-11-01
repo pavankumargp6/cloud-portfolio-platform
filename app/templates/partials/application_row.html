@@ -1,6 +1,9 @@
 <tr id="application-{{ application.id }}">
   <td>{{ application.id }}</td>
-  <td>{{ application.name }}</td>
+  <td>
+    <span class="status-dot status-{{ monitoring[application.id].current_status }}"></span>
+    {{ application.name }}
+  </td>
   <td><span class="badge env-{{ application.environment.value }}">{{ application.environment.value }}</span></td>
   <td><span class="badge status-{{ application.status.value }}">{{ application.status.value }}</span></td>
   <td><a href="{{ application.base_url }}" target="_blank" rel="noopener noreferrer">{{ application.base_url }}</a></td>

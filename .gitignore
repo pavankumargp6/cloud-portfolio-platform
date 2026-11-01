@@ -2,3 +2,9 @@
 __pycache__/
 *.py[cod]
 .venv/
+
+# Milestone 3 — TLS test fixtures (generated, not committed)
+tests/_tls_fixtures/*.pem
+tests/_tls_fixtures/*.key
+tests/_tls_fixtures/*.csr
+tests/_tls_fixtures/*.srl

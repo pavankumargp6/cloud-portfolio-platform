@@ -7,6 +7,25 @@ import uuid
 
 BASE_URL = "http://localhost:8080"
 
+def api_request(path, method="GET", payload=None):
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(
+        BASE_URL + path, data=data, headers=headers, method=method
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read()
+            return resp.status, (json.loads(body) if body else None)
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        exc.close()
+        return exc.code, (json.loads(body) if body else None)
+
+
 
 def http_get(path):
     req = urllib.request.Request(BASE_URL + path)
@@ -177,3 +196,122 @@ class TestDashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# =============================================================================
+# Phase 8.3 — Monitoring Dashboard UI Tests
+# =============================================================================
+
+class TestMonitoringDashboard(unittest.TestCase):
+    def setUp(self):
+        # Create a test client and app for each test
+        self.client_name = f"mon-ui-{uuid.uuid4().hex[:8]}"
+        status, client = api_request("/clients", "POST", {"name": self.client_name})
+        self.assertEqual(status, 201)
+        self.client_id = client["id"]
+
+        self.app_name = f"app-{uuid.uuid4().hex[:8]}"
+        status, app_obj = api_request(
+            f"/clients/{self.client_id}/applications",
+            "POST",
+            {
+                "name": self.app_name,
+                "base_url": "https://1.1.1.1/",
+                "environment": "production",
+            },
+        )
+        self.assertEqual(status, 201)
+        self.app_id = app_obj["id"]
+
+    def test_client_detail_shows_monitoring_panel(self):
+        # Get the client detail page
+        status, html = http_get(f"/dashboard/clients/{self.client_id}")
+        self.assertEqual(status, 200)
+        # Assert the panel ID is present
+        self.assertIn(f'id="monitoring-panel-{self.app_id}"', html)
+        # Assert the default state (disabled)
+        self.assertIn("Monitoring: UNKNOWN", html)
+        self.assertIn("Enable Monitoring", html)
+
+    def test_enable_monitoring_via_dashboard(self):
+        # Enable via the dashboard HTMX endpoint
+        status, html, _ = http_post_form(
+            f"/dashboard/applications/{self.app_id}/monitoring/enable", {}
+        )
+        self.assertEqual(status, 200)
+        # The returned fragment should now show "Disable Monitoring"
+        self.assertIn("Disable Monitoring", html)
+
+        # Verify via the JSON API that it actually persisted
+        status, body = api_request(f"/applications/{self.app_id}/monitoring")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["enabled"])
+        self.assertIsNotNone(body["next_check_at"])
+
+    def test_monitoring_checks_page_renders(self):
+        # Hit the new checks page
+        status, html = http_get(f"/dashboard/applications/{self.app_id}/checks")
+        self.assertEqual(status, 200)
+        self.assertIn(f"Check History: {self.app_name}", html)
+        self.assertIn("No checks yet.", html)
+
+    def test_run_now_cooldown_error_renders(self):
+        # Enable monitoring first
+        api_request(f"/applications/{self.app_id}/monitoring", "PATCH", {"enabled": True})
+        
+        # Hit run-now immediately (within the 5s grace period)
+        status, html, _ = http_post_form(
+            f"/dashboard/applications/{self.app_id}/monitoring/run-now", {}
+        )
+        self.assertEqual(status, 200)
+        # It should render the error in the panel
+        self.assertIn("Cooldown active. Retry in", html)
+
+    def test_ssrf_block_renders_error_in_panel(self):
+        # Create an app with a private URL (bypassing M1 validation? M1 allows 127.0.0.1)
+        status, app_obj = api_request(
+            f"/clients/{self.client_id}/applications",
+            "POST",
+            {
+                "name": "bad-app",
+                "base_url": "http://127.0.0.1/",
+                "environment": "production",
+            },
+        )
+        self.assertEqual(status, 201)
+        bad_app_id = app_obj["id"]
+
+        # Try to enable monitoring for it via the dashboard
+        status, html, _ = http_post_form(
+            f"/dashboard/applications/{bad_app_id}/monitoring/enable", {}
+        )
+        self.assertEqual(status, 200)  # HTMX route returns 200 with error fragment
+        # The panel should show the SSRF error
+        self.assertIn("blocked_ip", html)
+
+
+class TestReportingDashboard(unittest.TestCase):
+    def setUp(self):
+        self.client_name = f"report-ui-{uuid.uuid4().hex[:8]}"
+        status, client = api_request("/clients", "POST", {"name": self.client_name})
+        self.assertEqual(status, 201)
+        self.client_id = client["id"]
+
+        # Create at least one application so the report has data to render
+        status, app_obj = api_request(
+            f"/clients/{self.client_id}/applications",
+            "POST",
+            {
+                "name": "report-app",
+                "base_url": "https://1.1.1.1/",
+                "environment": "production",
+            },
+        )
+        self.assertEqual(status, 201)
+
+    def test_report_page_renders(self):
+        status, html = http_get(f"/dashboard/clients/{self.client_id}/report")
+        self.assertEqual(status, 200)
+        self.assertIn("Reliability Report", html)
+        self.assertIn(self.client_name, html)
+        self.assertIn("Uptime", html)

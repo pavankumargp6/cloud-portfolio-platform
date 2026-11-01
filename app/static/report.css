@@ -1,0 +1,122 @@
+:root {
+  --text: #1c2126;
+  --muted: #5c6670;
+  --border: #e3e6ea;
+  --accent: #2563eb;
+  --green: #067647;
+  --amber: #92400e;
+  --red: #b42318;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 0;
+  padding: 2rem;
+  background: #f6f7f9;
+}
+
+.report-container {
+  max-width: 900px;
+  margin: 0 auto;
+  background: white;
+  padding: 3rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+}
+
+header {
+  border-bottom: 2px solid var(--text);
+  padding-bottom: 1rem;
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+header h1 { margin: 0; font-size: 2rem; }
+header p { margin: 0; color: var(--muted); }
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.summary-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.summary-box h3 { margin: 0; font-size: 0.9rem; color: var(--muted); text-transform: uppercase; }
+.summary-box p { margin: 0.5rem 0 0; font-size: 2rem; font-weight: bold; }
+
+.app-section {
+  margin-bottom: 3rem;
+  page-break-inside: avoid;
+}
+
+.app-header {
+  background: #f6f7f9;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.app-header h2 { margin: 0; font-size: 1.25rem; }
+.app-header a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; }
+
+.badge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+.badge.up { background: #d9f2e5; color: var(--green); }
+.badge.down { background: #fee4e2; color: var(--red); }
+.badge.ack { background: #fde8c7; color: var(--amber); }
+
+.print-btn {
+  display: block;
+  margin: 0 auto 2rem;
+  padding: 0.75rem 2rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+}
+.print-btn:hover { opacity: 0.9; }
+
+/* Print-specific styles */
+@media print {
+  body { background: white; padding: 0; }
+  .report-container { box-shadow: none; padding: 0; max-width: 100%; }
+  .print-btn { display: none !important; }
+  .app-section { page-break-inside: avoid; }
+  .page-break { page-break-before: always; }
+}

@@ -7,13 +7,16 @@ from app.models.application import Application
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientRead, ClientUpdate
 from app.schemas.pagination import Page
+from app.services.agencies import resolve_agency_id
 
 router = APIRouter(tags=["clients"])
 
 
 @router.post("/clients", response_model=ClientRead, status_code=201)
 def create_client(payload: ClientCreate, db: Session = Depends(get_db)):
+    agency_id = resolve_agency_id(db, payload.agency_id)
     client = Client(
+        agency_id=agency_id,
         name=payload.name,
         contact_email=payload.contact_email,
         notes=payload.notes,

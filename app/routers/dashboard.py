@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -13,6 +13,12 @@ from app.models.enums import ApplicationStatus, Environment
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.schemas.client import ClientCreate, ClientUpdate
 from app.services.dashboard import get_dashboard_stats
+from app.services import monitoring as svc
+from app.services import incidents as inc_svc
+from app.services import backups as bk_svc
+from app.services import reporting as report_svc
+from app.models.incident import Incident
+from app.models.notification import NotificationLog
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -82,12 +88,54 @@ def client_detail_page(
         .where(Application.client_id == client_id)
         .order_by(Application.id)
     ).all()
+    # Fetch monitoring state for each app (single query per app is fine for
+    # a small number of applications per client; can be optimized later).
+    monitoring = {app.id: svc.get_snapshot(db, app.id) for app in applications}
+    
+    # Fetch backups for these apps
+    app_ids = [app.id for app in applications]
+    backups = {}
+    if app_ids:
+        for aid in app_ids:
+            bk_records, _ = bk_svc.list_backups(db, aid, limit=5)
+            backups[aid] = [
+                {"record": r, "latest": bk_svc.get_latest_verification(db, r.id)}
+                for r in bk_records
+            ]
+
+    # Fetch incidents for these apps
+    incidents = []
+    notif_logs = {}
+    if app_ids:
+        incidents = db.scalars(
+            select(Incident)
+            .where(Incident.application_id.in_(app_ids))
+            .order_by(Incident.started_at.desc())
+            .limit(10)
+        ).all()
+
+        if incidents:
+            inc_ids = [i.id for i in incidents]
+            logs = db.scalars(
+                select(NotificationLog)
+                .where(NotificationLog.incident_id.in_(inc_ids))
+                .order_by(NotificationLog.sent_at.desc())
+            ).all()
+            for log in logs:
+                if log.incident_id not in notif_logs:
+                    notif_logs[log.incident_id] = []
+                notif_logs[log.incident_id].append(log)
+
     return templates.TemplateResponse(
         request,
         "clients/detail.html",
         {
             "client": client,
             "applications": applications,
+            "monitoring": monitoring,
+            "incidents": incidents,
+            "notif_logs": notif_logs,
+            "backups": backups,
             "nav": "clients",
             "environments": ENVIRONMENTS,
             "statuses": STATUSES,
@@ -258,4 +306,147 @@ def edit_application_form(
         )
     return RedirectResponse(
         url=f"/dashboard/clients/{application.client_id}", status_code=303
+    )
+
+# =============================================================================
+# Phase 8.2 — Monitoring dashboard routes (HTMX)
+# =============================================================================
+
+@router.get("/applications/{application_id}/checks", response_class=HTMLResponse)
+def application_checks_page(
+    application_id: int,
+    request: Request,
+    page: int = Query(1, ge=1),
+    db: Session = Depends(get_db),
+):
+    """Paginated history of checks for a single application."""
+    app = db.get(Application, application_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    limit = 20
+    offset = (page - 1) * limit
+    rows, total = svc.list_checks(db, application_id, limit, offset)
+    total_pages = (total + limit - 1) // limit if total > 0 else 1
+
+    snap = svc.get_snapshot(db, application_id)
+    return templates.TemplateResponse(
+        request,
+        "monitoring_checks.html",
+        {
+            "application": app,
+            "snapshot": snap,
+            "checks": rows,
+            "total": total,
+            "page": page,
+            "total_pages": total_pages,
+            "nav": "clients",
+        },
+    )
+
+
+def _render_monitoring_panel(request: Request, db: Session, application_id: int, error: str = None):
+    app = db.get(Application, application_id)
+    snap = svc.get_snapshot(db, application_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/monitoring_panel.html",
+        {"app": app, "monitoring": snap, "error": error},
+    )
+
+
+@router.post("/applications/{application_id}/monitoring/enable")
+def enable_monitoring_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        svc.update_config(db, application_id, {"enabled": True})
+    except svc.SSRFBlockedError as exc:
+        # Return the panel with an error so HTMX can swap it in-place
+        return _render_monitoring_panel(request, db, application_id, error=exc.message)
+    return _render_monitoring_panel(request, db, application_id)
+
+
+@router.post("/applications/{application_id}/monitoring/disable")
+def disable_monitoring_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+    svc.update_config(db, application_id, {"enabled": False})
+    return _render_monitoring_panel(request, db, application_id)
+
+
+@router.post("/applications/{application_id}/monitoring/interval")
+def update_interval_htmx(
+    application_id: int,
+    request: Request,
+    interval_seconds: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    try:
+        svc.update_config(db, application_id, {"interval_seconds": interval_seconds})
+    except svc.MonitoringError as exc:
+        return _render_monitoring_panel(request, db, application_id, error=str(exc))
+    return _render_monitoring_panel(request, db, application_id)
+
+
+@router.post("/applications/{application_id}/monitoring/run-now")
+def run_now_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        svc.request_immediate_check(db, application_id)
+        error = None
+    except svc.CooldownActiveError as exc:
+        error = f"Cooldown active. Retry in {exc.retry_after}s."
+    except svc.MonitoringDisabledError:
+        error = "Monitoring is disabled."
+    except svc.ApplicationNotFoundError:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return _render_monitoring_panel(request, db, application_id, error=error)
+
+@router.post("/incidents/{incident_id}/acknowledge")
+def acknowledge_incident_htmx(incident_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        inc_svc.acknowledge_incident(db, incident_id, by="Dashboard User")
+    except inc_svc.IncidentError as e:
+        logger.warning(f"Failed to acknowledge incident: {e}")
+    
+    # Redirect back to the referring page (or root if missing)
+    referer = request.headers.get("referer", "/dashboard/")
+    return RedirectResponse(url=referer, status_code=303)
+
+@router.post("/incidents/{incident_id}/resolve")
+def resolve_incident_htmx(
+    incident_id: int, 
+    request: Request, 
+    notes: str = Form(""), 
+    db: Session = Depends(get_db)
+):
+    try:
+        inc_svc.resolve_incident(db, incident_id, by="Dashboard User", notes=notes or "Resolved via dashboard")
+    except inc_svc.IncidentError as e:
+        logger.warning(f"Failed to resolve incident: {e}")
+        
+    referer = request.headers.get("referer", "/dashboard/")
+    return RedirectResponse(url=referer, status_code=303)
+
+@router.post("/backups/{backup_id}/verify")
+def verify_backup_htmx(
+    backup_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    try:
+        bk_svc.verify_backup(db, backup_id)
+    except ValueError as e:
+        logger.warning(f"Failed to verify backup: {e}")
+
+    referer = request.headers.get("referer", "/dashboard/")
+    return RedirectResponse(url=referer, status_code=303)
+
+@router.get("/clients/{client_id}/report", response_class=HTMLResponse)
+def client_report_page(client_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        report = report_svc.generate_client_report(db, client_id, days=30)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    return templates.TemplateResponse(
+        request,
+        "reports/client_report.html",
+        {"report": report}
     )

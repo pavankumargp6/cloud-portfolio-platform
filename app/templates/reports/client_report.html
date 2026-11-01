@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client Report - {{ report.client.name }}</title>
+  <link rel="stylesheet" href="/static/report.css">
+</head>
+<body>
+
+<button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+
+<div class="report-container">
+  <header>
+    <div>
+      <h1>Reliability Report</h1>
+      <p>Client: <strong>{{ report.client.name }}</strong></p>
+    </div>
+    <div style="text-align: right;">
+      <p>Generated: {{ report.generated_at.strftime("%Y-%m-%d %H:%M UTC") }}</p>
+      <p>Period: Last {{ report.period_days }} days</p>
+    </div>
+  </header>
+
+  {% if not report.applications %}
+  <p style="color: var(--muted); text-align: center; padding: 2rem;">
+    No applications configured for this client yet.
+  </p>
+  {% endif %}
+
+  {% for app_data in report.applications %}
+  <section class="app-section">
+    <div class="app-header">
+      <h2>{{ app_data.application.name }}</h2>
+      <a href="{{ app_data.application.base_url }}">{{ app_data.application.base_url }}</a>
+    </div>
+
+    <div class="summary-grid">
+      <div class="summary-box">
+        <h3>Uptime</h3>
+        <p>{{ app_data.uptime_pct }}%</p>
+      </div>
+      <div class="summary-box">
+        <h3>Avg Latency</h3>
+        <p>{{ app_data.avg_latency }}ms</p>
+      </div>
+      <div class="summary-box">
+        <h3>Total Downtime</h3>
+        <p>{{ app_data.total_downtime_minutes }}m</p>
+      </div>
+    </div>
+
+    <h3>Incidents</h3>
+    {% if app_data.incidents %}
+    <table>
+      <thead>
+        <tr>
+          <th>Started</th>
+          <th>Duration</th>
+          <th>Status</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inc in app_data.incidents %}
+        <tr>
+          <td>{{ inc.started_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ inc.duration_minutes }}m</td>
+          <td>
+            <span class="badge {% if inc.status == 'resolved' %}up{% elif inc.status == 'acknowledged' %}ack{% else %}down{% endif %}">
+              {{ inc.status }}
+            </span>
+          </td>
+          <td>{{ inc.notes or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--muted);">No incidents reported in this period.</p>
+    {% endif %}
+
+    <h3>Backups</h3>
+    {% if app_data.backups %}
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Location</th>
+          <th>Verification</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for bk in app_data.backups %}
+        <tr>
+          <td>{{ bk.created_at.strftime("%Y-%m-%d") }}</td>
+          <td><code>{{ bk.location }}</code></td>
+          <td>
+            {% if bk.verified is none %}
+              <span class="badge ack">Unverified</span>
+            {% elif bk.verified %}
+              <span class="badge up">Verified</span>
+            {% else %}
+              <span class="badge down">Failed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--muted);">No backups recorded in this period.</p>
+    {% endif %}
+    
+    {% if not loop.last %}<div class="page-break"></div>{% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+</body>
+</html>

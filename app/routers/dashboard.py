@@ -16,6 +16,7 @@ from app.services.dashboard import get_dashboard_stats
 from app.services import monitoring as svc
 from app.services import incidents as inc_svc
 from app.services import backups as bk_svc
+from app.services import reporting as report_svc
 from app.models.incident import Incident
 from app.models.notification import NotificationLog
 
@@ -436,3 +437,16 @@ def verify_backup_htmx(
 
     referer = request.headers.get("referer", "/dashboard/")
     return RedirectResponse(url=referer, status_code=303)
+
+@router.get("/clients/{client_id}/report", response_class=HTMLResponse)
+def client_report_page(client_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        report = report_svc.generate_client_report(db, client_id, days=30)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    return templates.TemplateResponse(
+        request,
+        "reports/client_report.html",
+        {"report": report}
+    )

@@ -2,7 +2,12 @@
 {% block title %}{{ client.name }} · Agency Reliability Desk{% endblock %}
 {% block content %}
 <p><a href="/dashboard/clients">← All clients</a></p>
-<h1>{{ client.name }}</h1>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+  <h1 style="margin: 0;">{{ client.name }}</h1>
+  <a href="/dashboard/clients/{{ client.id }}/report" target="_blank" class="btn-primary" style="text-decoration: none; padding: 0.6rem 1.2rem; border-radius: 6px; color: white; background: var(--accent); font-weight: bold;">
+    📄 Generate Report
+  </a>
+</div>
 
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 

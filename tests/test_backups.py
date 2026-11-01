@@ -9,6 +9,7 @@ try:
     from app.models.client import Client
     from app.models.backup import BackupRecord, BackupVerification
     from app.services import backups as svc
+    from tests.support.factories import create_test_client
     _READY = True
     _IMPORT_ERROR = None
 except ImportError as exc:
@@ -28,8 +29,7 @@ class BackupTestBase(unittest.TestCase):
         self.db.commit()
 
         suffix = uuid.uuid4().hex[:8]
-        client = Client(name=f"bk-{suffix}")
-        self.db.add(client)
+        client = create_test_client(self.db, f"bk-{suffix}")
         self.db.flush()
         app = Application(
             client_id=client.id,

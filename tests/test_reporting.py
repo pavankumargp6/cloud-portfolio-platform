@@ -12,6 +12,7 @@ try:
     from app.models.incident import Incident
     from app.models.backup import BackupRecord
     from app.services import reporting as svc
+    from tests.support.factories import create_test_client
     _READY = True
 except ImportError:
     _READY = False
@@ -30,8 +31,7 @@ class ReportTestBase(unittest.TestCase):
         self.db.commit()
 
         suffix = uuid.uuid4().hex[:8]
-        client = Client(name=f"rep-{suffix}")
-        self.db.add(client)
+        client = create_test_client(self.db, f"rep-{suffix}")
         self.db.flush()
         app = Application(
             client_id=client.id,

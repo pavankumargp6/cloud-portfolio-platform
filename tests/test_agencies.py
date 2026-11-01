@@ -108,5 +108,68 @@ class TestAgencies(unittest.TestCase):
         )
 
 
+class TestClientAgencyFallback(unittest.TestCase):
+    """Option A behaviour: POST /clients without agency_id lands on Default Agency.
+
+    Exercises the *router function directly* (not HTTP) so these tests run
+    without a live server, matching the call pattern used by test_clients.py.
+    """
+
+    def setUp(self):
+        if not _READY:
+            self.skipTest("requires container")
+        self.db = SessionLocal()
+        self.default = (
+            self.db.query(Agency).filter_by(name=DEFAULT_AGENCY_NAME).first()
+        )
+        if self.default is None:
+            self.skipTest("Default Agency missing")
+        self.default_id = self.default.id
+        self.created_client_ids = []
+
+    def tearDown(self):
+        try:
+            self.db.rollback()
+            for cid in self.created_client_ids:
+                self.db.query(Client).filter(Client.id == cid).delete()
+            self.db.commit()
+        finally:
+            self.db.close()
+
+    def test_client_create_without_agency_uses_default(self):
+        from app.routers.clients import create_client
+        from app.schemas.client import ClientCreate
+
+        created = create_client(
+            ClientCreate(name="fallback-test"), db=self.db
+        )
+        self.created_client_ids.append(created.id)
+        self.assertEqual(created.agency_id, self.default_id)
+
+    def test_client_create_with_explicit_agency_ignores_default(self):
+        from app.routers.clients import create_client
+        from app.schemas.client import ClientCreate
+
+        suffix = uuid.uuid4().hex[:8]
+        other = Agency(name=f"explicit-agency-{suffix}")
+        self.db.add(other)
+        self.db.commit()
+        self.db.refresh(other)
+        other_id = other.id
+
+        try:
+            created = create_client(
+                ClientCreate(name="explicit-test", agency_id=other_id),
+                db=self.db,
+            )
+            self.created_client_ids.append(created.id)
+            self.assertEqual(created.agency_id, other_id)
+            self.assertNotEqual(created.agency_id, self.default_id)
+        finally:
+            self.db.query(Client).filter(Client.agency_id == other_id).delete()
+            self.db.query(Agency).filter(Agency.id == other_id).delete()
+            self.db.commit()
+
+
 if __name__ == "__main__":
     unittest.main()

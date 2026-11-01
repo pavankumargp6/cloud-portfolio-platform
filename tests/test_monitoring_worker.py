@@ -19,6 +19,7 @@ try:
     from app.monitoring.retention import _reset_prune_state, maybe_prune
     from app.monitoring.scheduler import pick_due, record_outcome, reschedule
     from app.worker.loop import run_once
+    from tests.support.factories import create_test_client
     _READY = True
     _IMPORT_ERROR = None
 except ImportError as exc:
@@ -45,8 +46,7 @@ class WorkerTestBase(unittest.TestCase):
         self, interval=300, threshold=3, next_offset=-60, status="active"
     ):
         suffix = uuid.uuid4().hex[:8]
-        client = Client(name=f"w-{suffix}")
-        self.db.add(client)
+        client = create_test_client(self.db, f"w-{suffix}")
         self.db.flush()
         app = Application(
             client_id=client.id,

@@ -288,3 +288,30 @@ class TestMonitoringDashboard(unittest.TestCase):
         self.assertEqual(status, 200)  # HTMX route returns 200 with error fragment
         # The panel should show the SSRF error
         self.assertIn("blocked_ip", html)
+
+
+class TestReportingDashboard(unittest.TestCase):
+    def setUp(self):
+        self.client_name = f"report-ui-{uuid.uuid4().hex[:8]}"
+        status, client = api_request("/clients", "POST", {"name": self.client_name})
+        self.assertEqual(status, 201)
+        self.client_id = client["id"]
+
+        # Create at least one application so the report has data to render
+        status, app_obj = api_request(
+            f"/clients/{self.client_id}/applications",
+            "POST",
+            {
+                "name": "report-app",
+                "base_url": "https://1.1.1.1/",
+                "environment": "production",
+            },
+        )
+        self.assertEqual(status, 201)
+
+    def test_report_page_renders(self):
+        status, html = http_get(f"/dashboard/clients/{self.client_id}/report")
+        self.assertEqual(status, 200)
+        self.assertIn("Reliability Report", html)
+        self.assertIn(self.client_name, html)
+        self.assertIn("Uptime", html)

@@ -136,6 +136,44 @@ class TestDashboard(unittest.TestCase):
         self.assertIsNotNone(client)
         self.assertEqual(client["contact_email"], "ops@example.com")
 
+    def test_create_client_form_assigns_default_agency(self):
+        """Dashboard client creation must assign the Default Agency.
+
+        Regression guard for CI run #40: dashboard.py was constructing
+        Client(...) without agency_id, violating clients.agency_id NOT NULL.
+
+        Runs on host (no DB access). Verification strategy:
+          1. Dashboard-created client carries a non-null agency_id.
+          2. Its agency_id equals the agency_id of a reference client
+             created via POST /clients — that path is proven to land on
+             Default Agency by the container-side tests in
+             tests.test_agencies.TestPublicAgencyInputRejectedHTTP.
+        """
+        name = f"dash-agency-{uuid.uuid4().hex[:8]}"
+        status, _, _ = http_post_form(
+            "/dashboard/clients",
+            {"name": name, "contact_email": "", "notes": ""},
+        )
+        self.assertEqual(status, 200)
+
+        client = find_client_by_name(name)
+        self.assertIsNotNone(client, "Dashboard did not create the client")
+        self.assertIn("agency_id", client)
+        self.assertIsInstance(client["agency_id"], int)
+        self.assertGreater(client["agency_id"], 0)
+
+        ref_name = f"ref-agency-{uuid.uuid4().hex[:8]}"
+        ref_status, ref_client = api_request(
+            "/clients", "POST", {"name": ref_name}
+        )
+        self.assertEqual(ref_status, 201, ref_client)
+        self.assertEqual(
+            client["agency_id"],
+            ref_client["agency_id"],
+            "Dashboard-created client has a different agency than the "
+            "API path (which is proven to use Default Agency)",
+        )
+
     def test_create_client_invalid_returns_422(self):
         status, body, _ = http_post_form(
             "/dashboard/clients", {"name": "", "contact_email": "", "notes": ""}

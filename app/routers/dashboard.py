@@ -13,6 +13,7 @@ from app.models.enums import ApplicationStatus, Environment
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.schemas.client import ClientCreate, ClientUpdate
 from app.services.dashboard import get_dashboard_stats
+from app.services.agencies import resolve_default_agency_id
 from app.services import monitoring as svc
 from app.services import incidents as inc_svc
 from app.services import backups as bk_svc
@@ -165,7 +166,9 @@ def create_client_form(
             {"clients": clients, "nav": "clients", "error": str(exc)},
             status_code=422,
         )
+    agency_id = resolve_default_agency_id(db)
     client = Client(
+        agency_id=agency_id,
         name=payload.name,
         contact_email=payload.contact_email,
         notes=payload.notes,

@@ -1,14 +1,15 @@
-"""Agency service — fallback resolution for legacy callers.
+"""Agency service — server-controlled Default Agency resolution.
 
 Phase 13.1 introduces multi-tenancy at the schema layer (clients.agency_id
-NOT NULL, FK to agencies.id ON DELETE RESTRICT). The HTTP API and test
-fixtures that predate the change do not supply agency_id.
+NOT NULL, FK to agencies.id ON DELETE RESTRICT). Until authentication lands
+(Phase 13.2/13.3), the unauthenticated HTTP API and ORM test fixtures
+resolve the Default Agency inserted by migration 0006_agencies.py.
 
-This module provides a single fallback path: callers that pass agency_id=None
-land on the Default Agency inserted by migration 0006_agencies.py. The
-fallback is loud — every hit is logged — so that once Phase 13.2 supplies
-agency_id from the auth session on every request, any remaining fallback
-appears in the log as a defect rather than as silent behaviour.
+Security note: this resolver intentionally accepts NO caller-supplied agency
+id. The public API must never be able to select another agency; every write
+is pinned to the Default Agency. When the auth session supplies agency_id in
+a later phase, this fallback will be replaced — until then it is the only
+path, and it must not trust request input.
 
 Lookup is by name, not by a hardcoded id. If the Default Agency is ever
 renamed or reseeded with a different id, this module follows the data.
@@ -26,19 +27,16 @@ log = logging.getLogger(__name__)
 DEFAULT_AGENCY_NAME = "Default Agency"
 
 
-def resolve_agency_id(db: Session, agency_id: int | None) -> int:
-    """Return the agency id to use for a Client write.
+def resolve_default_agency_id(db: Session) -> int:
+    """Return the Default Agency's id for a server-controlled Client write.
 
-    - If agency_id is provided, return it unchanged (caller's choice wins).
-    - If agency_id is None, look up the Default Agency by name and return
-      its id, logging a structured fallback event.
-
-    Raises RuntimeError if the Default Agency row is missing — that is a
-    schema error (migration 0006 did not seed it), never a silent None.
+    - Accepts no agency id from the caller. Public input is never trusted.
+    - Looks up the agency by its exact name.
+    - Logs a structured event every time the Default Agency is assigned, so
+      any usage of this transitional fallback is visible in the logs.
+    - Raises RuntimeError if the row is missing — that is a schema error
+      (migration 0006 did not seed it), never a silent NULL.
     """
-    if agency_id is not None:
-        return agency_id
-
     default = db.scalar(
         select(Agency).where(Agency.name == DEFAULT_AGENCY_NAME)
     )
@@ -49,9 +47,9 @@ def resolve_agency_id(db: Session, agency_id: int | None) -> int:
         )
 
     log.info(
-        "agency_fallback_default_used",
+        "default_agency_assigned",
         extra={
-            "event": "agency_fallback_default_used",
+            "event": "default_agency_assigned",
             "default_agency_id": default.id,
         },
     )

@@ -1,28 +1,8 @@
-import json
+"""Application API tests — Phase 13.2. Auth enforced via shared client."""
 import unittest
-import urllib.error
-import urllib.request
 import uuid
 
-BASE_URL = "http://localhost:8080"
-
-
-def api_request(path, method="GET", payload=None):
-    data = None
-    headers = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(
-        BASE_URL + path, data=data, headers=headers, method=method
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            body = response.read()
-            return response.status, (json.loads(body) if body else None)
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        return exc.code, (json.loads(body) if body else None)
+from tests.support.auth_client import api_request
 
 
 class TestApplications(unittest.TestCase):

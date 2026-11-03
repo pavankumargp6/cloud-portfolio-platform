@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Checks · {{ application.name }}{% endblock %}
+{% block content %}
+<p><a href="/dashboard/clients/{{ application.client_id }}">← Back to {{ application.name }}</a></p>
+<h1>Check History: {{ application.name }}</h1>
+<p>Status: {{ snapshot.current_status }} | Total checks: {{ total }}</p>
+
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Status</th>
+      <th>HTTP</th>
+      <th>Latency</th>
+      <th>Reason</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for check in checks %}
+    <tr>
+      <td>{{ check.checked_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+      <td><span class="status-dot status-{{ check.status }}"></span> {{ check.status }}</td>
+      <td>{{ check.http_status or "-" }}</td>
+      <td>{{ check.latency_ms }}ms</td>
+      <td>{{ check.failure_reason or "-" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No checks yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+    <a href="?page={{ page - 1 }}">← Previous</a>
+  {% endif %}
+  <span>Page {{ page }} of {{ total_pages }}</span>
+  {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

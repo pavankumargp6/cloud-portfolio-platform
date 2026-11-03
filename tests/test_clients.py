@@ -1,31 +1,18 @@
-import json
+"""Client API tests — Phase 13.2.
+
+Authentication is now required. All requests go through
+`tests.support.auth_client.api_request`, which logs in as the shared
+test user (Default Agency) and injects the CSRF header on state-changing
+methods. Test bodies are unchanged from Phase 13.1.
+"""
 import unittest
-import urllib.error
-import urllib.request
 import uuid
 
-BASE_URL = "http://localhost:8080"
-
-
-def api_request(path, method="GET", payload=None):
-    data = None
-    headers = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(
-        BASE_URL + path, data=data, headers=headers, method=method
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            body = response.read()
-            return response.status, (json.loads(body) if body else None)
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        return exc.code, (json.loads(body) if body else None)
+from tests.support.auth_client import api_request
 
 
 class TestClients(unittest.TestCase):
+
     def _create_client(self):
         name = f"client-{uuid.uuid4().hex[:8]}"
         status, created = api_request("/clients", "POST", {"name": name})
@@ -112,6 +99,84 @@ class TestClients(unittest.TestCase):
         self.assertEqual(status, 201, app_obj)
         status, _ = api_request(f"/clients/{created['id']}", "DELETE")
         self.assertEqual(status, 409)
+
+
+class TestClientAgencyContract(unittest.TestCase):
+    """HTTP-level /clients contract — Phase 13.2 authentication + agency rules.
+
+    Three independent guarantees:
+      1. Anonymous POST /clients is rejected before schema validation (401).
+      2. Authenticated POST with agency_id is rejected by schema (422).
+      3. Authenticated POST without agency_id succeeds and uses
+         current_user.agency_id (matches the reference client's agency_id).
+    """
+
+    def test_anonymous_post_rejected_401(self):
+        from tests.support.auth_client import api_request_anon
+        status, _ = api_request_anon(
+            "/clients", "POST", {"name": "anon-attempt"}
+        )
+        self.assertEqual(status, 401)
+
+    def test_authenticated_post_with_agency_id_rejected_422(self):
+        # Any integer here — schema rejects it before any lookup
+        status, _ = api_request(
+            "/clients",
+            "POST",
+            {"name": "rejected-6d7", "agency_id": 999},
+        )
+        self.assertEqual(status, 422)
+
+    def test_authenticated_post_without_agency_id_uses_current_user_agency(self):
+        # Create a reference client via the same authenticated path
+        ref_name = f"ref-{uuid.uuid4().hex[:8]}"
+        status, ref = api_request("/clients", "POST", {"name": ref_name})
+        self.assertEqual(status, 201, ref)
+        self.assertIsInstance(ref["agency_id"], int)
+        self.assertGreater(ref["agency_id"], 0)
+
+        # The dashboard path (also authenticated) must land on the same agency
+        from tests.support.auth_client import AuthClient
+        client = AuthClient()
+        client._login()
+        import urllib.request
+        import urllib.parse
+        dash_name = f"dash-{uuid.uuid4().hex[:8]}"
+        body = urllib.parse.urlencode(
+            {"name": dash_name, "contact_email": "", "notes": "",
+             "_csrf_token": client.csrf}
+        ).encode()
+        req = urllib.request.Request(
+            "http://localhost:8080/dashboard/clients", data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(client.jar)
+        )
+        with opener.open(req, timeout=5):
+            pass
+
+        # Find the dashboard-created client via the authenticated API
+        found = None
+        offset = 0
+        while True:
+            st, page = api_request(f"/clients?limit=100&offset={offset}")
+            for c in page["items"]:
+                if c["name"] == dash_name:
+                    found = c
+                    break
+            if found is not None:
+                break
+            offset += page["limit"]
+            if offset >= page["total"]:
+                break
+        self.assertIsNotNone(found, f"dashboard-created client {dash_name!r} not found")
+        self.assertEqual(
+            found["agency_id"],
+            ref["agency_id"],
+            "Dashboard-created client agency_id must match API path",
+        )
 
 
 if __name__ == "__main__":

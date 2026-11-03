@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_api_user
 from app.db import get_db
+from app.models.user import User
 from app.models.application import Application
 from app.models.client import Client
 from app.schemas.application import (
@@ -35,7 +37,10 @@ def _require_application(db: Session, application_id: int) -> Application:
     status_code=201,
 )
 def create_application(
-    client_id: int, payload: ApplicationCreate, db: Session = Depends(get_db)
+    client_id: int,
+    payload: ApplicationCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     _require_client(db, client_id)
     application = Application(client_id=client_id, **payload.model_dump())
@@ -53,6 +58,7 @@ def list_client_applications(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     _require_client(db, client_id)
     total = db.scalar(
@@ -75,6 +81,7 @@ def list_applications(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     total = db.scalar(select(func.count()).select_from(Application)) or 0
     rows = db.scalars(
@@ -84,7 +91,11 @@ def list_applications(
 
 
 @router.get("/applications/{application_id}", response_model=ApplicationRead)
-def get_application(application_id: int, db: Session = Depends(get_db)):
+def get_application(
+    application_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
     return _require_application(db, application_id)
 
 
@@ -93,6 +104,7 @@ def update_application(
     application_id: int,
     payload: ApplicationUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     application = _require_application(db, application_id)
 
@@ -105,7 +117,11 @@ def update_application(
 
 
 @router.delete("/applications/{application_id}", status_code=204)
-def delete_application(application_id: int, db: Session = Depends(get_db)):
+def delete_application(
+    application_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
     application = _require_application(db, application_id)
     db.delete(application)
     db.commit()

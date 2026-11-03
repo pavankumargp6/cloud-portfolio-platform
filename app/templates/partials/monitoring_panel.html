@@ -1,0 +1,53 @@
+<div id="monitoring-panel-{{ app.id }}" class="monitoring-panel">
+  {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  
+  <div class="monitoring-header">
+    <h3>
+      <span class="status-dot status-{{ monitoring.current_status }}"></span>
+      Monitoring: {{ monitoring.current_status | upper }}
+    </h3>
+    {% if monitoring.last_checked_at %}
+      <span class="muted">Last checked: {{ monitoring.last_checked_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
+    {% else %}
+      <span class="muted">Never checked</span>
+    {% endif %}
+  </div>
+
+  <div class="monitoring-controls">
+    {% if monitoring.enabled %}
+      <form hx-post="/dashboard/applications/{{ app.id }}/monitoring/disable" hx-target="#monitoring-panel-{{ app.id }}" hx-swap="outerHTML" style="display:inline;">
+        <button type="submit" class="btn-danger">Disable Monitoring</button>
+      </form>
+      <form hx-post="/dashboard/applications/{{ app.id }}/monitoring/run-now" hx-target="#monitoring-panel-{{ app.id }}" hx-swap="outerHTML" style="display:inline;">
+        <button type="submit" class="btn-secondary">Run Check Now</button>
+      </form>
+      <form hx-post="/dashboard/applications/{{ app.id }}/monitoring/interval" hx-target="#monitoring-panel-{{ app.id }}" hx-swap="outerHTML" style="display:inline-flex; gap:0.5rem; align-items:center;">
+        <label style="margin:0;">Interval:</label>
+        <select name="interval_seconds" style="padding:0.2rem;">
+          <option value="60" {% if monitoring.interval_seconds == 60 %}selected{% endif %}>1 min</option>
+          <option value="300" {% if monitoring.interval_seconds == 300 %}selected{% endif %}>5 min</option>
+          <option value="900" {% if monitoring.interval_seconds == 900 %}selected{% endif %}>15 min</option>
+          <option value="3600" {% if monitoring.interval_seconds == 3600 %}selected{% endif %}>1 hour</option>
+        </select>
+        <button type="submit">Update</button>
+      </form>
+    {% else %}
+      <form hx-post="/dashboard/applications/{{ app.id }}/monitoring/enable" hx-target="#monitoring-panel-{{ app.id }}" hx-swap="outerHTML" style="display:inline;">
+        <button type="submit" class="btn-primary">Enable Monitoring</button>
+      </form>
+    {% endif %}
+    <a href="/dashboard/applications/{{ app.id }}/checks" class="btn-secondary" style="margin-left: 1rem;">View History</a>
+  </div>
+
+  <div class="monitoring-details">
+    <p>Interval: {{ monitoring.interval_seconds }}s | Consecutive failures: {{ monitoring.consecutive_failures }} / {{ monitoring.failure_threshold }}</p>
+    {% if monitoring.cleartext_warning %}
+      <p class="alert alert-warning" style="padding:0.5rem; margin-top:0.5rem;">⚠️ Cleartext HTTP — no TLS certificate.</p>
+    {% endif %}
+    {% if monitoring.last_ssl_expires_at %}
+      <p>SSL Expiry: {{ monitoring.last_ssl_expires_at.strftime("%Y-%m-%d") }}</p>
+    {% endif %}
+  </div>
+</div>

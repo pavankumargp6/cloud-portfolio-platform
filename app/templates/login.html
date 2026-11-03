@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Agency Reliability Desk</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="login-page">
+    <header class="login-header">
+      <h1>Agency Reliability Desk</h1>
+      <p class="login-subtitle">Sign in to continue</p>
+    </header>
+
+    {% if error %}
+      <div class="alert alert-error" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="login-form">
+      <input type="hidden" name="_login_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next }}">
+
+      <label class="form-field">
+        <span>Email</span>
+        <input type="email" name="email" required autofocus autocomplete="username"
+               maxlength="320">
+      </label>
+
+      <label class="form-field">
+        <span>Password</span>
+        <input type="password" name="password" required autocomplete="current-password"
+               minlength="12" maxlength="128">
+      </label>
+
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+
+    <footer class="login-footer">
+      Accounts are provisioned by an operator. Contact your administrator
+      if you need access.
+    </footer>
+  </main>
+</body>
+</html>

@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 class ClientCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     name: str = Field(min_length=1, max_length=255)
     contact_email: Optional[EmailStr] = None
     notes: Optional[str] = None
@@ -30,6 +29,7 @@ class ClientRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    agency_id: int
     name: str
     contact_email: Optional[str] = None
     notes: Optional[str] = None

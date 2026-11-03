@@ -15,7 +15,19 @@ if not DATABASE_URL:
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 from app.models.base import Base  # noqa: E402
-from app.models import application, client, note  # noqa: F401,E402
+from app.models import (  # noqa: F401,E402
+    agency,
+    application,
+    auth_session,
+    backup,
+    check_result,
+    client,
+    incident,
+    monitoring,
+    notification,
+    note,
+    user,
+)
 
 target_metadata = Base.metadata
 

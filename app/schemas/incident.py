@@ -41,11 +41,15 @@ class IncidentPage(BaseModel):
 
 
 class IncidentAcknowledge(BaseModel):
+    # Actor is derived from the authenticated user (Phase 13.2); no
+    # request-supplied `by` field. extra="forbid" keeps arbitrary fields
+    # like `by` rejected with 422.
     model_config = ConfigDict(extra="forbid")
-    by: Optional[str] = Field(None, max_length=255)
 
 
 class IncidentResolve(BaseModel):
+    # Actor derived from the authenticated user; only resolution notes
+    # come from the request.
     model_config = ConfigDict(extra="forbid")
-    by: Optional[str] = Field(None, max_length=255)
+    notes: Optional[str] = None
     notes: Optional[str] = None

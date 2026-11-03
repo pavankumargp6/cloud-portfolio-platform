@@ -10,7 +10,9 @@ All business logic lives in the service. This router only:
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_api_user
 from app.db import get_db
+from app.models.user import User
 from app.schemas.monitoring import (
     CheckResultPage,
     CheckResultRead,
@@ -30,7 +32,11 @@ def _to_read(snapshot: svc.MonitoringSnapshot) -> MonitoringConfigRead:
     "/applications/{application_id}/monitoring",
     response_model=MonitoringConfigRead,
 )
-def get_monitoring(application_id: int, db: Session = Depends(get_db)):
+def get_monitoring(
+    application_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
     try:
         return _to_read(svc.get_snapshot(db, application_id))
     except svc.ApplicationNotFoundError:
@@ -45,6 +51,7 @@ def patch_monitoring(
     application_id: int,
     payload: MonitoringConfigUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     updates = payload.model_dump(exclude_unset=True)
     try:
@@ -68,6 +75,7 @@ def list_checks(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     try:
         rows, total = svc.list_checks(db, application_id, limit, offset)
@@ -84,6 +92,7 @@ def list_latest_checks(
     application_id: int,
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     try:
         return svc.list_latest_checks(db, application_id, limit)
@@ -95,7 +104,11 @@ def list_latest_checks(
     "/applications/{application_id}/checks/run-now",
     status_code=202,
 )
-def run_check_now(application_id: int, db: Session = Depends(get_db)):
+def run_check_now(
+    application_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
     try:
         svc.request_immediate_check(db, application_id)
     except svc.ApplicationNotFoundError:

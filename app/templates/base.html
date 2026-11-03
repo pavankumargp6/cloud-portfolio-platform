@@ -4,12 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Agency Reliability Desk{% endblock %}</title>
+  {% set csrf_token = request.cookies.get('agency_csrf', '') %}
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script>
+    /* HTMX CSRF hook — injects X-CSRF-Token from the meta tag into every
+       state-changing HTMX request. Server validates against the session's
+       csrf_token_hash. Same value as the agency_csrf cookie the JS reads via
+       the meta tag (the cookie is not HttpOnly, so direct read would work
+       too, but the meta tag is more robust if cookie paths change). */
+    document.addEventListener('htmx:configRequest', function(evt) {
+      var method = (evt.detail.verb || 'GET').toUpperCase();
+      if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta && meta.content) {
+          evt.detail.headers['X-CSRF-Token'] = meta.content;
+        }
+      }
+    });
+  </script>
 </head>
 <body>
   <div class="prototype-banner" role="status">
-    Development prototype — single agency, no authentication, synthetic data only.
+    Phase 13.2 — single-agency scope; multi-tenant isolation is Phase 13.3.
   </div>
   <header class="site-header">
     <a class="brand" href="/dashboard/">Agency Reliability Desk</a>
@@ -17,12 +35,21 @@
       <a href="/dashboard/" class="{% if nav == 'dashboard' %}active{% endif %}">Dashboard</a>
       <a href="/dashboard/clients" class="{% if nav == 'clients' %}active{% endif %}">Clients</a>
     </nav>
+    {% if request.state.user %}
+      <div class="user-menu">
+        <span class="user-identity" title="Signed in">{{ request.state.user.email }}</span>
+        <form method="post" action="/logout" class="logout-form">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn btn-link">Log out</button>
+        </form>
+      </div>
+    {% endif %}
   </header>
   <main class="container">
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    Milestone 2 · Local development only · <a href="/docs">API docs</a>
+    Milestone 3 · Phase 13.2 · <a href="/docs">API docs</a>
   </footer>
 </body>
 </html>

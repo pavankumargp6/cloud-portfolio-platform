@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_api_user
 from app.db import get_db
+from app.models.user import User
 from app.schemas.backup import BackupCreate, BackupRead, BackupVerificationRead
 from app.schemas.pagination import Page
 from app.services import backups as svc
@@ -20,6 +22,7 @@ def create_backup(
     application_id: int,
     payload: BackupCreate,
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     try:
         return svc.record_backup(
@@ -42,6 +45,7 @@ def list_backups(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     records, total = svc.list_backups(db, application_id, limit, offset)
 
@@ -64,6 +68,7 @@ def list_backups(
 def verify_backup(
     backup_id: int,
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     try:
         return svc.verify_backup(db, backup_id)

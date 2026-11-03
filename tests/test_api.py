@@ -1,34 +1,18 @@
-import json
+"""Core API tests — Phase 13.2.
+
+Health is public; /notes requires auth. Test bodies unchanged from
+Phase 13.1 aside from the auth client swap.
+"""
 import unittest
-import urllib.request
 import uuid
 
-BASE_URL = "http://localhost:8080"
-
-
-def api_request(path, method="GET", payload=None):
-    data = None
-    headers = {}
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    request = urllib.request.Request(
-        BASE_URL + path,
-        data=data,
-        headers=headers,
-        method=method,
-    )
-
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return response.status, json.loads(response.read())
+from tests.support.auth_client import api_request, api_request_anon
 
 
 class TestCloudPortfolioAPI(unittest.TestCase):
 
     def test_health_endpoint(self):
-        status, result = api_request("/health")
+        status, result = api_request_anon("/health")
 
         self.assertEqual(status, 200)
         self.assertEqual(result["status"], "healthy")
@@ -39,8 +23,8 @@ class TestCloudPortfolioAPI(unittest.TestCase):
 
         status, created = api_request(
             "/notes",
-            method="POST",
-            payload={"content": content},
+            "POST",
+            {"content": content},
         )
 
         self.assertEqual(status, 200)

@@ -283,111 +283,66 @@ class TestWorkerIncidentIntegration(IncidentTestBase):
 
 
 class TestIncidentDashboardIntegration(IncidentTestBase):
-    """Tests the dashboard endpoints for incidents (requires API to be running)."""
-    
+    """Dashboard endpoints for incidents — Phase 13.2. Requires auth.
+
+    Runs inside the api container. All HTTP requests go through the
+    container-side auth client (localhost:8000, direct-DB user seeding).
+    """
+
     def test_incident_panel_renders(self):
-        import urllib.request
-        import uuid
+        from tests.support.container_auth import api_request, get_html
 
-        # 1. Create a client and app via API
-        import json
-        BASE_URL = "http://localhost:8000"
-        
-        def api_post(path, data):
-            req = urllib.request.Request(
-                BASE_URL + path,
-                data=json.dumps(data).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req) as resp:
-                return json.loads(resp.read())
+        status, client = api_request(
+            "/clients", "POST", {"name": f"dash-{uuid.uuid4().hex[:6]}"}
+        )
+        self.assertEqual(status, 201, client)
+        status, app = api_request(
+            f"/clients/{client['id']}/applications", "POST",
+            {"name": "dash-app", "base_url": "https://1.1.1.1/",
+             "environment": "production"},
+        )
+        self.assertEqual(status, 201, app)
 
-        client = api_post("/clients", {"name": f"dash-{uuid.uuid4().hex[:6]}"})
-        app = api_post(f"/clients/{client['id']}/applications", {
-            "name": "dash-app",
-            "base_url": "https://1.1.1.1/",
-            "environment": "production"
-        })
-        
-        # 2. Open incident directly in DB
         svc.open_incident(self.db, app["id"], reason="Test incident")
         self.db.commit()
 
-        # 3. Fetch dashboard HTML
-        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
-        with urllib.request.urlopen(req) as resp:
-            html = resp.read().decode()
-            
+        status, html = get_html(f"/dashboard/clients/{client['id']}")
+        self.assertEqual(status, 200)
         self.assertIn("Recent Incidents", html)
         self.assertIn("OPEN", html)
         self.assertIn("Acknowledge", html)
         self.assertIn("Resolve", html)
 
     def test_acknowledge_incident_via_dashboard(self):
-        import urllib.request
-        import urllib.parse
-        import uuid
-        import json
-        BASE_URL = "http://localhost:8000"
-        
-        def api_post(path, data, form=False):
-            headers = {}
-            if form:
-                req_data = urllib.parse.urlencode(data).encode()
-                headers["Content-Type"] = "application/x-www-form-urlencoded"
-            else:
-                req_data = json.dumps(data).encode()
-                headers["Content-Type"] = "application/json"
-            
-            req = urllib.request.Request(
-                BASE_URL + path,
-                data=req_data,
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req) as resp:
-                return resp.status
+        from tests.support.container_auth import api_request, post_form
 
-        # 1. Create client/app
-        req = urllib.request.Request(
-            BASE_URL + "/clients",
-            data=json.dumps({"name": f"dash-{uuid.uuid4().hex[:6]}"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        status, client = api_request(
+            "/clients", "POST", {"name": f"dash-{uuid.uuid4().hex[:6]}"}
         )
-        with urllib.request.urlopen(req) as resp:
-            client = json.loads(resp.read())
-            
-        req = urllib.request.Request(
-            BASE_URL + f"/clients/{client['id']}/applications",
-            data=json.dumps({
-                "name": "dash-app",
-                "base_url": "https://1.1.1.1/",
-                "environment": "production"
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        self.assertEqual(status, 201, client)
+        status, app = api_request(
+            f"/clients/{client['id']}/applications", "POST",
+            {"name": "dash-app", "base_url": "https://1.1.1.1/",
+             "environment": "production"},
         )
-        with urllib.request.urlopen(req) as resp:
-            app = json.loads(resp.read())
+        self.assertEqual(status, 201, app)
 
-        # 2. Open incident
         inc = svc.open_incident(self.db, app["id"], reason="Test incident")
         self.db.commit()
         inc_id = inc.id
 
-        # 3. Hit dashboard acknowledge route
-        status = api_post(f"/dashboard/incidents/{inc_id}/acknowledge", {})
-        # Note: FastAPI RedirectResponse follows automatically in urllib if it's a GET, 
-        # but this is a POST, so we get 200 (or 303/302). We don't check exact status,
-        # just that it didn't crash.
+        # Dashboard POST — require_dashboard_user enforces CSRF via post_form helper.
+        # We don't check the status (it's a 303 redirect that post_form doesn't
+        # follow); we verify DB state instead.
+        post_form(f"/dashboard/incidents/{inc_id}/acknowledge", {})
 
-        # 4. Verify DB state
         self.db.expire_all()
         updated_inc = self.db.get(Incident, inc_id)
         self.assertEqual(updated_inc.status, "acknowledged")
-        self.assertEqual(updated_inc.acknowledged_by, "Dashboard User")
+        # Phase 13.2: actor is the authenticated user's email, not a hardcoded
+        # "Dashboard User" string. The container auth client seeds
+        # container-test@example.com.
+        self.assertEqual(updated_inc.acknowledged_by, "container-test@example.com")
 
 
 class TestNotifications(IncidentTestBase):
@@ -419,47 +374,29 @@ class TestNotifications(IncidentTestBase):
 
 
 class TestNotificationDashboardIntegration(IncidentTestBase):
-    """Tests that notification logs appear on the dashboard."""
+    """Notification logs on the dashboard — Phase 13.2. Requires auth."""
 
     def test_notification_log_renders_in_incident_table(self):
-        import urllib.request
-        import uuid
-        import json
-        BASE_URL = "http://localhost:8000"
+        from tests.support.container_auth import api_request, get_html
 
-        # 1. Create client/app
-        req = urllib.request.Request(
-            BASE_URL + "/clients",
-            data=json.dumps({"name": f"notif-dash-{uuid.uuid4().hex[:6]}"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        status, client = api_request(
+            "/clients", "POST", {"name": f"notif-dash-{uuid.uuid4().hex[:6]}"}
         )
-        with urllib.request.urlopen(req) as resp:
-            client = json.loads(resp.read())
-
-        req = urllib.request.Request(
-            BASE_URL + f"/clients/{client['id']}/applications",
-            data=json.dumps({
-                "name": "notif-app",
-                "base_url": "https://1.1.1.1/",
-                "environment": "production"
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        self.assertEqual(status, 201, client)
+        status, app = api_request(
+            f"/clients/{client['id']}/applications", "POST",
+            {"name": "notif-app", "base_url": "https://1.1.1.1/",
+             "environment": "production"},
         )
-        with urllib.request.urlopen(req) as resp:
-            app = json.loads(resp.read())
+        self.assertEqual(status, 201, app)
 
-        # 2. Open incident -> this triggers the notification log automatically
-        inc = svc.open_incident(self.db, app["id"], reason="Test incident")
+        # open_incident triggers notification log automatically
+        svc.open_incident(self.db, app["id"], reason="Test incident")
         self.db.commit()
 
-        # 3. Fetch dashboard HTML
-        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
-        with urllib.request.urlopen(req) as resp:
-            html = resp.read().decode()
-
-        # Verify the email recipient is shown in the alerts column
+        status, html = get_html(f"/dashboard/clients/{client['id']}")
+        self.assertEqual(status, 200)
         self.assertIn("Alerts Sent", html)
         self.assertIn("ops@agency.local", html)
-        self.assertIn("✓", html) # the green checkmark for sent status
+        self.assertIn("\u2713", html)  # green checkmark
+

@@ -117,7 +117,11 @@ if __name__ == "__main__":
 
 
 class TestBackupAPI(unittest.TestCase):
-    """HTTP API tests for backup endpoints. Runs inside the container."""
+    """HTTP API tests for backup endpoints — Phase 13.2.
+
+    Runs inside the api container. All requests go through the container-
+    side auth client (localhost:8000 + direct-DB user seeding).
+    """
 
     def setUp(self):
         if not _READY:
@@ -131,221 +135,120 @@ class TestBackupAPI(unittest.TestCase):
         self.db.close()
 
     def _create_app(self):
-        import urllib.request
-        import json
-        BASE_URL = "http://localhost:8000"
-        
-        req = urllib.request.Request(
-            BASE_URL + "/clients",
-            data=json.dumps({"name": f"api-bk-{uuid.uuid4().hex[:6]}"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        from tests.support.container_auth import api_request
+        status, client = api_request(
+            "/clients", "POST",
+            {"name": f"api-bk-{uuid.uuid4().hex[:6]}"},
         )
-        with urllib.request.urlopen(req) as resp:
-            client = json.loads(resp.read())
-            
-        req = urllib.request.Request(
-            BASE_URL + f"/clients/{client['id']}/applications",
-            data=json.dumps({
-                "name": "api-bk-app",
-                "base_url": "https://1.1.1.1/",
-                "environment": "production"
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        self.assertEqual(status, 201, client)
+
+        status, app = api_request(
+            f"/clients/{client['id']}/applications", "POST",
+            {"name": "api-bk-app", "base_url": "https://1.1.1.1/", "environment": "production"},
         )
-        with urllib.request.urlopen(req) as resp:
-            app = json.loads(resp.read())
-            
+        self.assertEqual(status, 201, app)
         return client, app
 
     def test_create_and_verify_backup_via_api(self):
-        import urllib.request
-        import json
-        BASE_URL = "http://localhost:8000"
-        
+        from tests.support.container_auth import api_request
         client, app = self._create_app()
-        
-        # 1. Create a backup
-        req = urllib.request.Request(
-            BASE_URL + f"/applications/{app['id']}/backups",
-            data=json.dumps({
-                "backup_type": "database",
-                "location": "s3://my-bucket/db-2026.sql",
-                "size_bytes": 102400
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+
+        status, backup = api_request(
+            f"/applications/{app['id']}/backups", "POST",
+            {"backup_type": "database", "location": "s3://my-bucket/db-2026.sql", "size_bytes": 102400},
         )
-        with urllib.request.urlopen(req) as resp:
-            backup = json.loads(resp.read())
-            
+        self.assertEqual(status, 201, backup)
         self.assertEqual(backup["location"], "s3://my-bucket/db-2026.sql")
         self.assertIsNone(backup["latest_verification"])
 
-        # 2. Verify it
-        req = urllib.request.Request(
-            BASE_URL + f"/backups/{backup['id']}/verify",
-            method="POST"
+        status, verification = api_request(
+            f"/backups/{backup['id']}/verify", "POST",
         )
-        with urllib.request.urlopen(req) as resp:
-            verification = json.loads(resp.read())
-            
+        self.assertEqual(status, 200, verification)
         self.assertEqual(verification["status"], "success")
-        
-        # 3. List backups and check latest_verification is present
-        req = urllib.request.Request(f"{BASE_URL}/applications/{app['id']}/backups")
-        with urllib.request.urlopen(req) as resp:
-            page = json.loads(resp.read())
-            
+
+        status, page = api_request(f"/applications/{app['id']}/backups")
+        self.assertEqual(status, 200)
         self.assertEqual(page["total"], 1)
         self.assertEqual(page["items"][0]["id"], backup["id"])
         self.assertIsNotNone(page["items"][0]["latest_verification"])
         self.assertEqual(page["items"][0]["latest_verification"]["status"], "success")
 
     def test_verify_corrupt_backup_via_api(self):
-        import urllib.request
-        import json
-        BASE_URL = "http://localhost:8000"
-        
+        from tests.support.container_auth import api_request
         client, app = self._create_app()
-        
-        # Create a corrupt backup
-        req = urllib.request.Request(
-            BASE_URL + f"/applications/{app['id']}/backups",
-            data=json.dumps({
-                "backup_type": "database",
-                "location": "s3://my-bucket/corrupt.sql"
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+
+        status, backup = api_request(
+            f"/applications/{app['id']}/backups", "POST",
+            {"backup_type": "database", "location": "s3://my-bucket/corrupt.sql"},
         )
-        with urllib.request.urlopen(req) as resp:
-            backup = json.loads(resp.read())
-            
-        # Verify it
-        req = urllib.request.Request(
-            BASE_URL + f"/backups/{backup['id']}/verify",
-            method="POST"
+        self.assertEqual(status, 201, backup)
+
+        status, verification = api_request(
+            f"/backups/{backup['id']}/verify", "POST",
         )
-        with urllib.request.urlopen(req) as resp:
-            verification = json.loads(resp.read())
-            
+        self.assertEqual(status, 200, verification)
         self.assertEqual(verification["status"], "failed")
         self.assertIn("corrupt", verification["error_message"].lower())
 
     def test_verify_missing_backup_404(self):
-        import urllib.request
-        import urllib.error
-        BASE_URL = "http://localhost:8000"
-        
-        req = urllib.request.Request(
-            BASE_URL + "/backups/999999999/verify",
-            method="POST"
-        )
-        try:
-            urllib.request.urlopen(req)
-            self.fail("Expected 404")
-        except urllib.error.HTTPError as exc:
-            self.assertEqual(exc.code, 404)
+        from tests.support.container_auth import api_request
+        status, _ = api_request("/backups/999999999/verify", "POST")
+        self.assertEqual(status, 404)
 
 
 class TestBackupDashboardIntegration(BackupTestBase):
-    """Tests the backup UI on the dashboard."""
+    """Tests the backup UI on the dashboard — Phase 13.2. Requires auth."""
 
     def test_backup_status_renders(self):
-        import urllib.request
-        import urllib.parse
-        import uuid
-        import json
-        BASE_URL = "http://localhost:8000"
-
-        # 1. Create client/app
-        req = urllib.request.Request(
-            BASE_URL + "/clients",
-            data=json.dumps({"name": f"bk-dash-{uuid.uuid4().hex[:6]}"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        from tests.support.container_auth import api_request, get_html
+        status, client = api_request(
+            "/clients", "POST",
+            {"name": f"bk-dash-{uuid.uuid4().hex[:6]}"},
         )
-        with urllib.request.urlopen(req) as resp:
-            client = json.loads(resp.read())
+        self.assertEqual(status, 201, client)
 
-        req = urllib.request.Request(
-            BASE_URL + f"/clients/{client['id']}/applications",
-            data=json.dumps({
-                "name": "bk-dash-app",
-                "base_url": "https://1.1.1.1/",
-                "environment": "production"
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        status, app = api_request(
+            f"/clients/{client['id']}/applications", "POST",
+            {"name": "bk-dash-app", "base_url": "https://1.1.1.1/", "environment": "production"},
         )
-        with urllib.request.urlopen(req) as resp:
-            app = json.loads(resp.read())
+        self.assertEqual(status, 201, app)
 
-        # 2. Create a backup and verify it (via service)
         rec = svc.record_backup(self.db, app["id"], "database", "s3://bucket/corrupt.sql")
         self.db.commit()
         svc.verify_backup(self.db, rec.id)
 
-        # 3. Fetch dashboard HTML
-        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
-        with urllib.request.urlopen(req) as resp:
-            html = resp.read().decode()
-
-        # Verify the UI elements are present
+        status, html = get_html(f"/dashboard/clients/{client['id']}")
+        self.assertEqual(status, 200)
         self.assertIn("Backups", html)
         self.assertIn("s3://bucket/corrupt.sql", html)
-        self.assertIn("✗ Failed", html)
+        self.assertIn("\u2717 Failed", html)
         self.assertIn("Re-Verify", html)
 
     def test_verify_backup_via_dashboard(self):
-        import urllib.request
-        import urllib.parse
-        import uuid
-        import json
-        BASE_URL = "http://localhost:8000"
-
-        # 1. Create client/app
-        req = urllib.request.Request(
-            BASE_URL + "/clients",
-            data=json.dumps({"name": f"bk-dash-{uuid.uuid4().hex[:6]}"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        from tests.support.container_auth import api_request, get_html, post_form
+        status, client = api_request(
+            "/clients", "POST",
+            {"name": f"bk-dash-{uuid.uuid4().hex[:6]}"},
         )
-        with urllib.request.urlopen(req) as resp:
-            client = json.loads(resp.read())
+        self.assertEqual(status, 201, client)
 
-        req = urllib.request.Request(
-            BASE_URL + f"/clients/{client['id']}/applications",
-            data=json.dumps({
-                "name": "bk-dash-app",
-                "base_url": "https://1.1.1.1/",
-                "environment": "production"
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+        status, app = api_request(
+            f"/clients/{client['id']}/applications", "POST",
+            {"name": "bk-dash-app", "base_url": "https://1.1.1.1/", "environment": "production"},
         )
-        with urllib.request.urlopen(req) as resp:
-            app = json.loads(resp.read())
+        self.assertEqual(status, 201, app)
 
-        # 2. Create a valid backup (unverified)
         rec = svc.record_backup(self.db, app["id"], "database", "s3://bucket/good.sql")
         self.db.commit()
 
-        # 3. Trigger verification via the dashboard route
-        req = urllib.request.Request(
-            BASE_URL + f"/dashboard/backups/{rec.id}/verify",
-            data=b"",
-            method="POST"
-        )
-        with urllib.request.urlopen(req) as resp:
-            pass # We ignore the redirect response
+        # Trigger verification via dashboard route (POST with CSRF)
+        post_form(f"/dashboard/backups/{rec.id}/verify", {})
 
-        # 4. Fetch the Client Detail page to verify the UI
-        req = urllib.request.Request(f"{BASE_URL}/dashboard/clients/{client['id']}")
-        with urllib.request.urlopen(req) as resp:
-            html = resp.read().decode()
+        status, html = get_html(f"/dashboard/clients/{client['id']}")
+        self.assertEqual(status, 200)
+        self.assertIn("\u2713 Verified", html)
 
-        # 5. The page should show "✓ Verified"
-        self.assertIn("✓ Verified", html)
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,58 +1,80 @@
-import json
+"""Dashboard UI tests — Phase 13.2.
+
+Authentication is required. Helpers use the shared auth client, which
+logs in as the test user and auto-injects `_csrf_token` on form POSTs.
+Test bodies are unchanged from Phase 13.1 except for three banner-text
+assertions — the banner was changed in Patch 6c from
+"Development prototype — single agency, no authentication, synthetic
+data only" to "Phase 13.2 — single-agency scope; multi-tenant isolation
+is Phase 13.3" because the old text was no longer accurate. Assertions
+updated accordingly.
+"""
 import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
-BASE_URL = "http://localhost:8080"
-
-def api_request(path, method="GET", payload=None):
-    data = None
-    headers = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(
-        BASE_URL + path, data=data, headers=headers, method=method
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read()
-            return resp.status, (json.loads(body) if body else None)
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        exc.close()
-        return exc.code, (json.loads(body) if body else None)
+from tests.support.auth_client import AuthClient, api_request, BASE_URL
 
 
+# --- shared auth client -----------------------------------------------------
+
+_client: AuthClient | None = None
+
+def _get_client() -> AuthClient:
+    global _client
+    if _client is None:
+        _client = AuthClient()
+    _client._login()  # idempotent — ensures session + csrf are populated
+    return _client
+
+
+# --- helpers (drop-in replacements for the pre-13.2 versions) --------------
 
 def http_get(path):
+    """Authenticated GET — returns (status, html_text). Raises on 4xx/5xx."""
+    client = _get_client()
     req = urllib.request.Request(BASE_URL + path)
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return resp.status, resp.read().decode("utf-8")
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(client.jar)
+    )
+    try:
+        with opener.open(req, timeout=5) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        raise
 
 
 def http_post_form(path, data):
-    body = urllib.parse.urlencode(data).encode("utf-8")
+    """Authenticated form POST with CSRF — returns (status, html_text, final_url)."""
+    client = _get_client()
+    payload = dict(data)
+    payload.setdefault("_csrf_token", client.csrf)
+    body = urllib.parse.urlencode(payload).encode("utf-8")
     req = urllib.request.Request(
         BASE_URL + path,
         data=body,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(client.jar)
+    )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with opener.open(req, timeout=5) as resp:
             return resp.status, resp.read().decode("utf-8"), resp.geturl()
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8")
+        body_text = exc.read().decode("utf-8")
         exc.close()
-        return exc.code, body, None
+        return exc.code, body_text, None
 
 
 def api_json(path):
-    with urllib.request.urlopen(BASE_URL + path, timeout=5) as resp:
-        return json.loads(resp.read())
+    """Authenticated JSON GET — returns parsed body. Caller checks response shape."""
+    status, body = api_request(path)
+    return body
 
 
 def find_client_by_name(name):
@@ -67,6 +89,8 @@ def find_client_by_name(name):
         if offset >= page["total"]:
             return None
 
+
+# --- tests -----------------------------------------------------------------
 
 class TestDashboard(unittest.TestCase):
 
@@ -86,7 +110,7 @@ class TestDashboard(unittest.TestCase):
     def test_dashboard_home_renders(self):
         status, body = http_get("/dashboard/")
         self.assertEqual(status, 200)
-        self.assertIn("Development prototype", body)
+        self.assertIn("Phase 13.2", body)
         self.assertIn("Clients", body)
         self.assertIn("Applications", body)
         self.assertIn("Applications by environment", body)
@@ -96,7 +120,7 @@ class TestDashboard(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("Add client", body)
         self.assertIn("<table", body)
-        self.assertIn("Development prototype", body)
+        self.assertIn("Phase 13.2", body)
 
     def test_client_detail_page(self):
         name = f"detail-{uuid.uuid4().hex[:8]}"
@@ -112,7 +136,7 @@ class TestDashboard(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(name, body)
         self.assertIn("Add application", body)
-        self.assertIn("Development prototype", body)
+        self.assertIn("Phase 13.2", body)
 
     def test_client_detail_404(self):
         status, _, _ = http_post_form(
@@ -136,18 +160,12 @@ class TestDashboard(unittest.TestCase):
         self.assertIsNotNone(client)
         self.assertEqual(client["contact_email"], "ops@example.com")
 
-    def test_create_client_form_assigns_default_agency(self):
-        """Dashboard client creation must assign the Default Agency.
+    def test_create_client_form_assigns_current_user_agency(self):
+        """Dashboard client creation must assign the current user's agency.
 
-        Regression guard for CI run #40: dashboard.py was constructing
-        Client(...) without agency_id, violating clients.agency_id NOT NULL.
-
-        Runs on host (no DB access). Verification strategy:
-          1. Dashboard-created client carries a non-null agency_id.
-          2. Its agency_id equals the agency_id of a reference client
-             created via POST /clients — that path is proven to land on
-             Default Agency by the container-side tests in
-             tests.test_agencies.TestPublicAgencyInputRejectedHTTP.
+        Regression guard for CI run #40 (NOT NULL violation) AND for the
+        Phase 13.2 contract that agency is derived from the auth session,
+        not from a fallback resolver.
         """
         name = f"dash-agency-{uuid.uuid4().hex[:8]}"
         status, _, _ = http_post_form(
@@ -162,6 +180,8 @@ class TestDashboard(unittest.TestCase):
         self.assertIsInstance(client["agency_id"], int)
         self.assertGreater(client["agency_id"], 0)
 
+        # Compare against a reference client created via the JSON API path.
+        # Both use current_user.agency_id, so they must match.
         ref_name = f"ref-agency-{uuid.uuid4().hex[:8]}"
         ref_status, ref_client = api_request(
             "/clients", "POST", {"name": ref_name}
@@ -171,7 +191,7 @@ class TestDashboard(unittest.TestCase):
             client["agency_id"],
             ref_client["agency_id"],
             "Dashboard-created client has a different agency than the "
-            "API path (which is proven to use Default Agency)",
+            "API path (both must use current_user.agency_id)",
         )
 
     def test_create_client_invalid_returns_422(self):
@@ -180,7 +200,6 @@ class TestDashboard(unittest.TestCase):
         )
         self.assertEqual(status, 422)
         self.assertIn("alert-error", body)
-        # Page-level error should appear exactly once, not per row
         self.assertEqual(body.count('alert alert-error'), 1,
                          "page-level error leaked into client rows")
 
@@ -232,17 +251,8 @@ class TestDashboard(unittest.TestCase):
         self.assertIn("alert-error", body)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-# =============================================================================
-# Phase 8.3 — Monitoring Dashboard UI Tests
-# =============================================================================
-
 class TestMonitoringDashboard(unittest.TestCase):
     def setUp(self):
-        # Create a test client and app for each test
         self.client_name = f"mon-ui-{uuid.uuid4().hex[:8]}"
         status, client = api_request("/clients", "POST", {"name": self.client_name})
         self.assertEqual(status, 201)
@@ -262,51 +272,39 @@ class TestMonitoringDashboard(unittest.TestCase):
         self.app_id = app_obj["id"]
 
     def test_client_detail_shows_monitoring_panel(self):
-        # Get the client detail page
         status, html = http_get(f"/dashboard/clients/{self.client_id}")
         self.assertEqual(status, 200)
-        # Assert the panel ID is present
         self.assertIn(f'id="monitoring-panel-{self.app_id}"', html)
-        # Assert the default state (disabled)
         self.assertIn("Monitoring: UNKNOWN", html)
         self.assertIn("Enable Monitoring", html)
 
     def test_enable_monitoring_via_dashboard(self):
-        # Enable via the dashboard HTMX endpoint
         status, html, _ = http_post_form(
             f"/dashboard/applications/{self.app_id}/monitoring/enable", {}
         )
         self.assertEqual(status, 200)
-        # The returned fragment should now show "Disable Monitoring"
         self.assertIn("Disable Monitoring", html)
 
-        # Verify via the JSON API that it actually persisted
         status, body = api_request(f"/applications/{self.app_id}/monitoring")
         self.assertEqual(status, 200)
         self.assertTrue(body["enabled"])
         self.assertIsNotNone(body["next_check_at"])
 
     def test_monitoring_checks_page_renders(self):
-        # Hit the new checks page
         status, html = http_get(f"/dashboard/applications/{self.app_id}/checks")
         self.assertEqual(status, 200)
         self.assertIn(f"Check History: {self.app_name}", html)
         self.assertIn("No checks yet.", html)
 
     def test_run_now_cooldown_error_renders(self):
-        # Enable monitoring first
         api_request(f"/applications/{self.app_id}/monitoring", "PATCH", {"enabled": True})
-        
-        # Hit run-now immediately (within the 5s grace period)
         status, html, _ = http_post_form(
             f"/dashboard/applications/{self.app_id}/monitoring/run-now", {}
         )
         self.assertEqual(status, 200)
-        # It should render the error in the panel
         self.assertIn("Cooldown active. Retry in", html)
 
     def test_ssrf_block_renders_error_in_panel(self):
-        # Create an app with a private URL (bypassing M1 validation? M1 allows 127.0.0.1)
         status, app_obj = api_request(
             f"/clients/{self.client_id}/applications",
             "POST",
@@ -319,12 +317,10 @@ class TestMonitoringDashboard(unittest.TestCase):
         self.assertEqual(status, 201)
         bad_app_id = app_obj["id"]
 
-        # Try to enable monitoring for it via the dashboard
         status, html, _ = http_post_form(
             f"/dashboard/applications/{bad_app_id}/monitoring/enable", {}
         )
-        self.assertEqual(status, 200)  # HTMX route returns 200 with error fragment
-        # The panel should show the SSRF error
+        self.assertEqual(status, 200)
         self.assertIn("blocked_ip", html)
 
 
@@ -335,7 +331,6 @@ class TestReportingDashboard(unittest.TestCase):
         self.assertEqual(status, 201)
         self.client_id = client["id"]
 
-        # Create at least one application so the report has data to render
         status, app_obj = api_request(
             f"/clients/{self.client_id}/applications",
             "POST",
@@ -353,3 +348,7 @@ class TestReportingDashboard(unittest.TestCase):
         self.assertIn("Reliability Report", html)
         self.assertIn(self.client_name, html)
         self.assertIn("Uptime", html)
+
+
+if __name__ == "__main__":
+    unittest.main()

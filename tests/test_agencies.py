@@ -1,7 +1,21 @@
-"""Tests for agency multi-tenancy.
+"""DB-level tests for agency multi-tenancy — Phase 13.2.
 
-Each test creates its own Agency and Client, and cleans them up in tearDown.
-We do NOT delete pre-existing clients or agencies.
+These tests run inside the api container (see CI workflow). They verify
+the database schema, constraints, and the ClientCreate schema directly —
+no HTTP. HTTP-level contract tests for the /clients POST endpoint
+(anonymous 401, authenticated 422 on agency_id, authenticated 201 with
+current_user.agency_id) live in tests/test_clients.py and run host-side
+where authentication from the host port works.
+
+Phase 13.1's TestPublicAgencyInputRejectedHTTP was moved to
+test_clients.py in Phase 13.2 because:
+  * POST /clients now requires authentication
+  * The auth_client used host-side (localhost:8080) is simpler than
+    replicating a container-local auth flow
+  * The contract being tested is API-level, not DB-level
+
+Each test creates its own Agency and Client, and cleans them up in
+tearDown. We do NOT delete pre-existing clients or agencies.
 """
 
 import unittest
@@ -38,14 +52,10 @@ class TestAgencies(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.db.rollback()  # clear any failed transaction left by the test
+            self.db.rollback()
             agency_id = getattr(self, "agency_id", None)
             if agency_id is None:
                 return
-            # Agency-scoped cleanup only. The Default Agency is never touched
-            # because agency_id is the id of the agency created in setUp, whose
-            # name is generated with a unique prefix and can never equal the
-            # Default Agency's name.
             self.db.query(Client).filter(
                 Client.agency_id == agency_id
             ).delete(synchronize_session=False)
@@ -85,9 +95,6 @@ class TestAgencies(unittest.TestCase):
         self.db.commit()
         client_id = client.id
 
-        # Direct DELETE bypasses ORM relationship handling, so the database's
-        # ON DELETE RESTRICT constraint is what fires (not an ORM attempt to
-        # null out the client's FK).
         try:
             with self.assertRaises(IntegrityError):
                 self.db.execute(
@@ -97,7 +104,6 @@ class TestAgencies(unittest.TestCase):
         finally:
             self.db.rollback()
 
-        # Both rows must still exist before teardown.
         self.assertIsNotNone(
             self.db.get(Agency, self.agency_id),
             "Agency was deleted despite ON DELETE RESTRICT",
@@ -108,183 +114,19 @@ class TestAgencies(unittest.TestCase):
         )
 
 
-class TestClientAgencyFallback(unittest.TestCase):
-    """Option A behaviour: server-controlled Default Agency assignment.
+class TestClientCreateSchema(unittest.TestCase):
+    """ClientCreate must reject `agency_id` in the payload (extra='forbid').
 
-    The direct-router test verifies the internal resolution path. The
-    HTTP-level class below verifies the public contract.
+    Proves that even if authentication is bypassed by a future code change,
+    the schema would still reject a caller-supplied agency_id.
     """
 
-    def setUp(self):
-        if not _READY:
-            self.skipTest("requires container")
-        self.db = SessionLocal()
-        self.default = (
-            self.db.query(Agency).filter_by(name=DEFAULT_AGENCY_NAME).first()
-        )
-        if self.default is None:
-            self.skipTest("Default Agency missing")
-        self.default_id = self.default.id
-        self.created_client_ids = []
-
-    def tearDown(self):
-        try:
-            self.db.rollback()
-            for cid in self.created_client_ids:
-                self.db.query(Client).filter(Client.id == cid).delete()
-            self.db.commit()
-        finally:
-            self.db.close()
-
-    def test_client_create_without_agency_uses_default(self):
-        """Direct-router call with no agency_id lands on Default Agency."""
-        from app.routers.clients import create_client
-        from app.schemas.client import ClientCreate
-
-        name = f"fallback-{uuid.uuid4().hex[:8]}"
-        created = create_client(ClientCreate(name=name), db=self.db)
-        self.created_client_ids.append(created.id)
-        self.assertEqual(created.agency_id, self.default_id)
-
-    def test_client_create_schema_rejects_agency_id(self):
-        """ClientCreate must reject agency_id in the payload (extra='forbid')."""
+    def test_schema_rejects_agency_id(self):
         from pydantic import ValidationError
         from app.schemas.client import ClientCreate
 
         with self.assertRaises(ValidationError):
-            ClientCreate(name="should-reject", agency_id=self.default_id)
-
-
-class TestPublicAgencyInputRejectedHTTP(unittest.TestCase):
-    """HTTP-level: POST /clients must never accept agency_id from callers.
-
-    Regression guard for the public-input vulnerability. Verifies:
-      1. POST without agency_id succeeds and lands on Default Agency.
-      2. POST with an arbitrary agency_id returns 422.
-      3. A rejected request creates no client, under any agency.
-    """
-
-    BASE_URL = "http://localhost:8000"
-
-    def setUp(self):
-        if not _READY:
-            self.skipTest("requires container")
-        self.db = SessionLocal()
-        self.default = (
-            self.db.query(Agency).filter_by(name=DEFAULT_AGENCY_NAME).first()
-        )
-        if self.default is None:
-            self.skipTest("Default Agency missing")
-        self.default_id = self.default.id
-        self.created_client_ids = []
-
-    def tearDown(self):
-        try:
-            self.db.rollback()
-            for cid in self.created_client_ids:
-                self.db.query(Client).filter(Client.id == cid).delete()
-            self.db.commit()
-        finally:
-            self.db.close()
-
-    def _post_clients(self, body):
-        import json
-        import urllib.error
-        import urllib.request
-
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            self.BASE_URL + "/clients",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.status, json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            payload = exc.read()
-            exc.close()
-            try:
-                parsed = json.loads(payload) if payload else None
-            except Exception:
-                parsed = None
-            return exc.code, parsed
-
-    def test_post_clients_without_agency_id_uses_default(self):
-        name = f"http-fallback-{uuid.uuid4().hex[:8]}"
-        status, body = self._post_clients({"name": name})
-        self.assertEqual(status, 201, body)
-        self.assertEqual(body["agency_id"], self.default_id)
-        self.created_client_ids.append(body["id"])
-
-    def test_post_clients_with_arbitrary_agency_id_returns_422(self):
-        suffix = uuid.uuid4().hex[:8]
-        other = Agency(name=f"http-other-{suffix}")
-        self.db.add(other)
-        self.db.commit()
-        self.db.refresh(other)
-        other_id = other.id
-        try:
-            status, body = self._post_clients(
-                {"name": f"rejected-{suffix}", "agency_id": other_id}
-            )
-            self.assertEqual(status, 422, body)
-        finally:
-            self.db.query(Client).filter(Client.agency_id == other_id).delete()
-            self.db.query(Agency).filter(Agency.id == other_id).delete()
-            self.db.commit()
-
-    def test_dashboard_form_assigns_default_agency(self):
-        """Container-side definitive check: POST /dashboard/clients assigns Default Agency."""
-        import urllib.parse
-        import urllib.request
-
-        name = f"dash-default-{uuid.uuid4().hex[:8]}"
-        data = urllib.parse.urlencode(
-            {"name": name, "contact_email": "", "notes": ""}
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            self.BASE_URL + "/dashboard/clients",
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            self.assertEqual(resp.status, 200)
-
-        self.db.expire_all()
-        created = self.db.query(Client).filter_by(name=name).one()
-        self.created_client_ids.append(created.id)
-        self.assertEqual(created.agency_id, self.default_id)
-
-    def test_rejected_request_creates_no_client(self):
-        suffix = uuid.uuid4().hex[:8]
-        other = Agency(name=f"http-other2-{suffix}")
-        self.db.add(other)
-        self.db.commit()
-        self.db.refresh(other)
-        other_id = other.id
-        try:
-            name = f"rejected-nobody-{suffix}"
-            status, _ = self._post_clients({"name": name, "agency_id": other_id})
-            self.assertEqual(status, 422)
-
-            self.db.expire_all()
-            self.assertEqual(
-                self.db.query(Client).filter(Client.name == name).all(),
-                [],
-                "rejected request created a client by name",
-            )
-            self.assertEqual(
-                self.db.query(Client).filter(Client.agency_id == other_id).count(),
-                0,
-                "rejected request created a client under the supplied agency",
-            )
-        finally:
-            self.db.query(Client).filter(Client.agency_id == other_id).delete()
-            self.db.query(Agency).filter(Agency.id == other_id).delete()
-            self.db.commit()
+            ClientCreate(name="should-reject", agency_id=12345)
 
 
 if __name__ == "__main__":

@@ -6,3 +6,4 @@ alembic
 email-validator
 jinja2
 python-multipart
+pwdlib[argon2]

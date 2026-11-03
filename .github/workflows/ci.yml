@@ -13,6 +13,19 @@ jobs:
   integration:
     name: Build and Integration Tests
     runs-on: ubuntu-latest
+    env:
+      # Pins the compose project name so test_user.py's subprocess seeding
+      # (`docker compose -p m8_13_2_test exec ...`) finds the containers
+      # started here. Without this, CI's default project name would differ
+      # from the name test_user.py expects, and every auth test would fail
+      # on "Failed to seed test user".
+      COMPOSE_PROJECT_NAME: m8_13_2_test
+      M8_TEST_PROJECT: m8_13_2_test
+      # Host-side tests import tests.support.* — PYTHONPATH must include the
+      # repo root so `from tests.support.auth_client import ...` resolves when
+      # test_auth_http.py is run as a script (python3 tests/... doesn't add
+      # CWD to sys.path).
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout repository
@@ -40,6 +53,9 @@ jobs:
           echo "API did not become healthy"
           docker compose ps
           exit 1
+
+      - name: Run auth lifecycle tests (host)
+        run: python3 tests/test_auth_http.py
 
       - name: Run HTTP integration tests (host)
         run: |

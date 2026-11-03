@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_api_user
 from app.db import get_db
+from app.models.user import User
 from app.schemas.incident import (
     IncidentAcknowledge,
     IncidentDetailRead,
@@ -23,6 +25,7 @@ def list_incidents(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     rows, total = svc.list_incidents(
         db, status=status, limit=limit, offset=offset
@@ -37,6 +40,7 @@ def list_application_incidents(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     rows, total = svc.list_incidents(
         db,
@@ -49,7 +53,11 @@ def list_application_incidents(
 
 
 @router.get("/{incident_id}", response_model=IncidentDetailRead)
-def get_incident(incident_id: int, db: Session = Depends(get_db)):
+def get_incident(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
     try:
         return svc.get_incident_with_events(db, incident_id)
     except svc.IncidentNotFoundError:
@@ -61,9 +69,10 @@ def acknowledge_incident(
     incident_id: int,
     payload: IncidentAcknowledge,
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     try:
-        return svc.acknowledge_incident(db, incident_id, by=payload.by)
+        return svc.acknowledge_incident(db, incident_id, by=user.email)
     except svc.IncidentNotFoundError:
         raise HTTPException(status_code=404, detail="Incident not found")
     except svc.InvalidIncidentStateError as exc:
@@ -78,10 +87,11 @@ def resolve_incident(
     incident_id: int,
     payload: IncidentResolve,
     db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
 ):
     try:
         return svc.resolve_incident(
-            db, incident_id, by=payload.by, notes=payload.notes
+            db, incident_id, by=user.email, notes=payload.notes
         )
     except svc.IncidentNotFoundError:
         raise HTTPException(status_code=404, detail="Incident not found")

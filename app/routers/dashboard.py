@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -6,22 +7,25 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_dashboard_user
 from app.db import get_db
 from app.models.application import Application
 from app.models.client import Client
 from app.models.enums import ApplicationStatus, Environment
+from app.models.user import User
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 from app.schemas.client import ClientCreate, ClientUpdate
-from app.services.dashboard import get_dashboard_stats
-from app.services.agencies import resolve_default_agency_id
-from app.services import monitoring as svc
-from app.services import incidents as inc_svc
 from app.services import backups as bk_svc
+from app.services import incidents as inc_svc
+from app.services import monitoring as svc
 from app.services import reporting as report_svc
+from app.services.dashboard import get_dashboard_stats
 from app.models.incident import Incident
 from app.models.notification import NotificationLog
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=APP_DIR / "templates")
@@ -49,7 +53,11 @@ def _application_or_404(db: Session, application_id: int) -> Application:
 
 
 @router.get("/", response_class=HTMLResponse)
-def dashboard_home(request: Request, db: Session = Depends(get_db)):
+def dashboard_home(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     stats = get_dashboard_stats(db)
     recent_clients = db.scalars(
         select(Client).order_by(Client.id.desc()).limit(5)
@@ -70,7 +78,11 @@ def dashboard_home(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/clients", response_class=HTMLResponse)
-def list_clients_page(request: Request, db: Session = Depends(get_db)):
+def list_clients_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     clients = db.scalars(select(Client).order_by(Client.id)).all()
     return templates.TemplateResponse(
         request,
@@ -81,7 +93,10 @@ def list_clients_page(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/clients/{client_id}", response_class=HTMLResponse)
 def client_detail_page(
-    client_id: int, request: Request, db: Session = Depends(get_db)
+    client_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     client = _client_or_404(db, client_id)
     applications = db.scalars(
@@ -89,11 +104,8 @@ def client_detail_page(
         .where(Application.client_id == client_id)
         .order_by(Application.id)
     ).all()
-    # Fetch monitoring state for each app (single query per app is fine for
-    # a small number of applications per client; can be optimized later).
     monitoring = {app.id: svc.get_snapshot(db, app.id) for app in applications}
-    
-    # Fetch backups for these apps
+
     app_ids = [app.id for app in applications]
     backups = {}
     if app_ids:
@@ -104,7 +116,6 @@ def client_detail_page(
                 for r in bk_records
             ]
 
-    # Fetch incidents for these apps
     incidents = []
     notif_logs = {}
     if app_ids:
@@ -151,6 +162,7 @@ def create_client_form(
     contact_email: str = Form(""),
     notes: str = Form(""),
     db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     try:
         payload = ClientCreate(
@@ -166,9 +178,8 @@ def create_client_form(
             {"clients": clients, "nav": "clients", "error": str(exc)},
             status_code=422,
         )
-    agency_id = resolve_default_agency_id(db)
     client = Client(
-        agency_id=agency_id,
+        agency_id=user.agency_id,
         name=payload.name,
         contact_email=payload.contact_email,
         notes=payload.notes,
@@ -187,6 +198,7 @@ def edit_client_form(
     contact_email: str = Form(""),
     notes: str = Form(""),
     db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     client = _client_or_404(db, client_id)
     try:
@@ -225,6 +237,7 @@ def create_application_form(
     status: str = Form("active"),
     description: str = Form(""),
     db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     client = _client_or_404(db, client_id)
     try:
@@ -271,6 +284,7 @@ def edit_application_form(
     status: str = Form(""),
     description: str = Form(""),
     db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     application = _application_or_404(db, application_id)
     try:
@@ -311,9 +325,6 @@ def edit_application_form(
         url=f"/dashboard/clients/{application.client_id}", status_code=303
     )
 
-# =============================================================================
-# Phase 8.2 — Monitoring dashboard routes (HTMX)
-# =============================================================================
 
 @router.get("/applications/{application_id}/checks", response_class=HTMLResponse)
 def application_checks_page(
@@ -321,8 +332,8 @@ def application_checks_page(
     request: Request,
     page: int = Query(1, ge=1),
     db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
-    """Paginated history of checks for a single application."""
     app = db.get(Application, application_id)
     if app is None:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -359,17 +370,26 @@ def _render_monitoring_panel(request: Request, db: Session, application_id: int,
 
 
 @router.post("/applications/{application_id}/monitoring/enable")
-def enable_monitoring_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+def enable_monitoring_htmx(
+    application_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     try:
         svc.update_config(db, application_id, {"enabled": True})
     except svc.SSRFBlockedError as exc:
-        # Return the panel with an error so HTMX can swap it in-place
         return _render_monitoring_panel(request, db, application_id, error=exc.message)
     return _render_monitoring_panel(request, db, application_id)
 
 
 @router.post("/applications/{application_id}/monitoring/disable")
-def disable_monitoring_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+def disable_monitoring_htmx(
+    application_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     svc.update_config(db, application_id, {"enabled": False})
     return _render_monitoring_panel(request, db, application_id)
 
@@ -380,6 +400,7 @@ def update_interval_htmx(
     request: Request,
     interval_seconds: int = Form(...),
     db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     try:
         svc.update_config(db, application_id, {"interval_seconds": interval_seconds})
@@ -389,7 +410,12 @@ def update_interval_htmx(
 
 
 @router.post("/applications/{application_id}/monitoring/run-now")
-def run_now_htmx(application_id: int, request: Request, db: Session = Depends(get_db)):
+def run_now_htmx(
+    application_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     try:
         svc.request_immediate_check(db, application_id)
         error = None
@@ -401,37 +427,49 @@ def run_now_htmx(application_id: int, request: Request, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="Application not found")
     return _render_monitoring_panel(request, db, application_id, error=error)
 
+
 @router.post("/incidents/{incident_id}/acknowledge")
-def acknowledge_incident_htmx(incident_id: int, request: Request, db: Session = Depends(get_db)):
+def acknowledge_incident_htmx(
+    incident_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     try:
-        inc_svc.acknowledge_incident(db, incident_id, by="Dashboard User")
+        inc_svc.acknowledge_incident(db, incident_id, by=user.email)
     except inc_svc.IncidentError as e:
         logger.warning(f"Failed to acknowledge incident: {e}")
-    
-    # Redirect back to the referring page (or root if missing)
+
     referer = request.headers.get("referer", "/dashboard/")
     return RedirectResponse(url=referer, status_code=303)
 
+
 @router.post("/incidents/{incident_id}/resolve")
 def resolve_incident_htmx(
-    incident_id: int, 
-    request: Request, 
-    notes: str = Form(""), 
-    db: Session = Depends(get_db)
+    incident_id: int,
+    request: Request,
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     try:
-        inc_svc.resolve_incident(db, incident_id, by="Dashboard User", notes=notes or "Resolved via dashboard")
+        inc_svc.resolve_incident(
+            db, incident_id, by=user.email,
+            notes=notes or "Resolved via dashboard",
+        )
     except inc_svc.IncidentError as e:
         logger.warning(f"Failed to resolve incident: {e}")
-        
+
     referer = request.headers.get("referer", "/dashboard/")
     return RedirectResponse(url=referer, status_code=303)
+
 
 @router.post("/backups/{backup_id}/verify")
 def verify_backup_htmx(
     backup_id: int,
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
 ):
     try:
         bk_svc.verify_backup(db, backup_id)
@@ -441,8 +479,14 @@ def verify_backup_htmx(
     referer = request.headers.get("referer", "/dashboard/")
     return RedirectResponse(url=referer, status_code=303)
 
+
 @router.get("/clients/{client_id}/report", response_class=HTMLResponse)
-def client_report_page(client_id: int, request: Request, db: Session = Depends(get_db)):
+def client_report_page(
+    client_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dashboard_user),
+):
     try:
         report = report_svc.generate_client_report(db, client_id, days=30)
     except ValueError:

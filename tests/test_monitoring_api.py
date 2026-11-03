@@ -1,31 +1,13 @@
-"""HTTP integration tests for monitoring endpoints."""
+"""HTTP integration tests for monitoring endpoints — Phase 13.2.
 
-import json
+All requests go through the authenticated test client. Test bodies
+unchanged from Phase 13.1 aside from the auth client swap and the
+removal of the local api_request helper.
+"""
 import unittest
-import urllib.error
-import urllib.request
 import uuid
 
-BASE_URL = "http://localhost:8080"
-
-
-def api_request(path, method="GET", payload=None):
-    data = None
-    headers = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(
-        BASE_URL + path, data=data, headers=headers, method=method
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read()
-            return resp.status, (json.loads(body) if body else None)
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        exc.close()
-        return exc.code, (json.loads(body) if body else None)
+from tests.support.auth_client import api_request
 
 
 def _create_app(base_url="https://1.1.1.1/"):
@@ -91,7 +73,6 @@ class TestMonitoringPatch(unittest.TestCase):
         self.assertEqual(detail.get("code"), "blocked_ip")
 
     def test_patch_enable_ssrf_port(self):
-        # base_url passes M1's URL check (scheme + netloc), port not allowed
         client_name = f"mon-{uuid.uuid4().hex[:8]}"
         _, client = api_request("/clients", "POST", {"name": client_name})
         status, app_obj = api_request(
@@ -229,9 +210,6 @@ class TestMonitoringRunNow(unittest.TestCase):
         self.assertEqual((body.get("detail") or {}).get("code"), "monitoring_disabled")
 
     def test_run_now_429_when_queued(self):
-        # Enabling sets next_check_at = now + 5s. run-now within that window
-        # cannot queue another check — the queue guard blocks it.
-        # Full 202-path coverage is in Phase 11 (worker + wait).
         app = _create_app()
         api_request(
             f"/applications/{app['id']}/monitoring",
